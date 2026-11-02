@@ -2,7 +2,7 @@
 
 > ⚠️ **本文件不是权威副本。**
 >
-> 合规声明的**单一事实来源**在工作台目录 `xsai-workbench/`（本地工作区，未发布到 GitHub）：
+> 合规声明的**单一事实来源**在工作台目录 `xsai-workbench/`（本地工作区，未单独发布）：
 > `docs/license-and-usage-compliance.md`。
 >
 > 工作台内本地路径：`../docs/license-and-usage-compliance.md`（相对本仓库根目录）。

@@ -24,11 +24,11 @@
 
 <div align="center">
 
-<!-- 本仓库是私有仓，raw.githubusercontent 不鉴权取不到文件，所以视频放官网，
-     这里只嵌入封面帧作为入口；<video> 直接指向 mp4 在 GitHub 上也不会渲染。 -->
+<!-- GitHub 只对 user-attachments 资源渲染内嵌播放器：指向 raw 的 <video> 会被过滤掉。
+     所以这里用封面帧做入口，点进官网首页即可点播。 -->
 <a href="https://cai.xsai5.xyz/"><img src="docs/assets/promo/stargather-promo-v9-poster.jpg" alt="星采 Stargather 宣传片 v9" width="100%" /></a>
 
-<sub>约 60 秒 · 在[官网首页](https://cai.xsai5.xyz/)点播放，默认静音 · [接触表](docs/assets/promo/stargather-promo-v9-contact-sheet.jpg) · 全片在官网 `assets/video/` 自托管</sub>
+<sub>约 60 秒 · 在[官网首页](https://cai.xsai5.xyz/)点播放，默认静音 · [720p](https://raw.githubusercontent.com/ly1713/platform-api/assets/promo/stargather-promo-v9-720p.mp4) · [1080p](https://raw.githubusercontent.com/ly1713/platform-api/assets/promo/stargather-promo-v9-1080p.mp4) · [接触表](docs/assets/promo/stargather-promo-v9-contact-sheet.jpg)</sub>
 
 </div>
 
@@ -338,8 +338,8 @@ uv run pytest tests/ -q          # 默认 SQLite，覆盖大部分逻辑
 
 ## 设计文档
 
-架构与设计文档在配套的**工作台目录** `xsai-workbench/`（需求、分期计划、品牌资产、宣传片工程）。
-该目录是本地工作区，未发布到 GitHub，所以这里不写外链：
+架构与设计文档在配套的工作台目录 `xsai-workbench/`（需求、分期计划、品牌资产、宣传片工程）。
+该目录目前是本地工作区、未单独发布，因此下列文档没有外链，路径相对工作台根目录：
 
 - 需求与设计：`docs/workbench-requirements-and-design-v1.md`
 - 开发总纲：`docs/development-master-plan.md`
