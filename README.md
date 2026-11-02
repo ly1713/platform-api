@@ -7,5 +7,5 @@
 - `promo/stargather-promo-v9-poster.jpg` — 宣传片封面帧
 - `promo/stargather-promo-v9-contact-sheet.jpg` — 全片接触表（8 镜静帧）
 
-文档里用 `https://raw.githubusercontent.com/lianying1716/platform-api/assets/...`
+文档里用 `（私有仓：raw 链接需要登录，README 里改用相对路径）`
 引用。重新生成：见工作台仓库 `promo-video/`。
