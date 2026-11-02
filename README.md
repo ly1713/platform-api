@@ -7,5 +7,6 @@
 - `promo/stargather-promo-v9-poster.jpg` — 宣传片封面帧
 - `promo/stargather-promo-v9-contact-sheet.jpg` — 全片接触表（8 镜静帧）
 
-这是私有仓：`raw.githubusercontent.com` 链接不带凭据取不到文件，因此 README 与官网都不再
-引用本分支，官网直接在 `site/assets/video/` 自托管同一支视频。重新生成：见工作台仓库 `promo-video/`。
+仓库已公开，文档里可直接用
+`https://raw.githubusercontent.com/ly1713/platform-api/assets/promo/...` 引用；
+官网首页则从 `site/assets/video/` 自托管同一支视频（首屏更快）。重新生成：见工作台仓库 `promo-video/`。
