@@ -6,7 +6,7 @@ services:
   platform-api:
     # 升级 = 改 PLATFORM_VERSION 后 `docker compose pull && docker compose up -d`
     # （同 Immich/Gitea 的镜像 tag 驱动）。本地开发想从源码构建用 override 文件。
-    image: ${PLATFORM_IMAGE:-ghcr.io/lianying1716/platform-api}:${PLATFORM_VERSION:-latest}
+    image: ${PLATFORM_IMAGE:-ghcr.io/ly1713/platform-api}:${PLATFORM_VERSION:-latest}
     # 左边是宿主端口（可改），右边容器内端口固定 9100：健康检查和容器网络依赖它。
     ports:
       - "${PLATFORM_PORT:-9100}:9100"
@@ -44,7 +44,7 @@ services:
       PLATFORM_UPDATER_URL: ${PLATFORM_UPDATER_URL:-}
       PLATFORM_UPDATER_TOKEN: ${PLATFORM_UPDATER_TOKEN:-}
       # 检查更新读取 GitHub Releases；fork 用户可改仓库，不透明 token 可避免 60 次/小时限流。
-      PLATFORM_UPDATE_REPO: ${PLATFORM_UPDATE_REPO:-lianying1716/platform-api}
+      PLATFORM_UPDATE_REPO: ${PLATFORM_UPDATE_REPO:-ly1713/platform-api}
       PLATFORM_UPDATE_GITHUB_TOKEN: ${PLATFORM_UPDATE_GITHUB_TOKEN:-}
       # 存储目录可视化选择：允许在网页「选择目录」里浏览的白名单根（`:` 分隔）。
       # 留空 = 容器内安全默认（只放行 /data）。要让用户选到宿主目录，先把宿主目录
@@ -74,7 +74,7 @@ services:
     restart: unless-stopped
 
   platform-worker:
-    image: ${PLATFORM_IMAGE:-ghcr.io/lianying1716/platform-api}:${PLATFORM_VERSION:-latest}
+    image: ${PLATFORM_IMAGE:-ghcr.io/ly1713/platform-api}:${PLATFORM_VERSION:-latest}
     command: ["python", "-m", "app.workers.runner"]
     environment:
       PLATFORM_DATABASE_URL: ${PLATFORM_DATABASE_URL:-}
@@ -119,7 +119,7 @@ services:
   # 不需要网页一键升级时，可整段删除或用 profiles 排除。
   platform-updater:
     # 边车用专用镜像（主镜像 + docker CLI + compose 插件）；主镜像不含 docker 客户端。
-    image: ${PLATFORM_UPDATER_IMAGE:-ghcr.io/lianying1716/platform-api-updater}:${PLATFORM_VERSION:-latest}
+    image: ${PLATFORM_UPDATER_IMAGE:-ghcr.io/ly1713/platform-api-updater}:${PLATFORM_VERSION:-latest}
     environment:
       PLATFORM_UPDATER_TOKEN: ${PLATFORM_UPDATER_TOKEN:-}
       UPDATER_COMPOSE_FILE: /compose/docker-compose.yml

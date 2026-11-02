@@ -10,9 +10,9 @@ compares the facts that already exist after a release:
 
 Usage:
     python scripts/verify_release_provenance.py \
-      --repo lianying1716/platform-api \
+      --repo ly1713/platform-api \
       --tag v1.2.3 \
-      --image ghcr.io/lianying1716/platform-api \
+      --image ghcr.io/ly1713/platform-api \
       --version-url http://127.0.0.1:9100/api/system/version
 
 The command exits non-zero on any mismatch.  It requires Docker credentials for

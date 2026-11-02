@@ -24,11 +24,11 @@
 
 <div align="center">
 
-<!-- GitHub 只对 user-attachments 资源渲染内嵌播放器：指向 raw.githubusercontent 的
-     <video> 会被过滤掉，点开只会下载文件。 -->
-<video src="https://github.com/user-attachments/assets/e9fcdca2-2fb2-452e-9086-3b4efdf85794" controls width="100%"></video>
+<!-- 本仓库是私有仓，raw.githubusercontent 不鉴权取不到文件，所以视频放官网，
+     这里只嵌入封面帧作为入口；<video> 直接指向 mp4 在 GitHub 上也不会渲染。 -->
+<a href="https://cai.xsai5.xyz/"><img src="docs/assets/promo/stargather-promo-v9-poster.jpg" alt="星采 Stargather 宣传片 v9" width="100%" /></a>
 
-<sub>约 60 秒（默认静音，点播放器右下角开声音）· [1080p 全片](https://github.com/user-attachments/assets/be90dda1-128e-4f44-8845-e54debe6172e) · [封面帧](https://raw.githubusercontent.com/lianying1716/platform-api/assets/promo/stargather-promo-v9-poster.jpg) · [接触表](https://raw.githubusercontent.com/lianying1716/platform-api/assets/promo/stargather-promo-v9-contact-sheet.jpg)</sub>
+<sub>约 60 秒 · 在[官网首页](https://cai.xsai5.xyz/)点播放，默认静音 · [接触表](docs/assets/promo/stargather-promo-v9-contact-sheet.jpg) · 全片在官网 `assets/video/` 自托管</sub>
 
 </div>
 
@@ -43,16 +43,16 @@
 
 <table>
 <tr>
-<td width="50%" align="center"><img src="https://raw.githubusercontent.com/lianying1716/platform-api/assets/shots/overview.jpg" alt="总览"><br><sub><b>总览</b> · 素材总量、时长、账号覆盖</sub></td>
-<td width="50%" align="center"><img src="https://raw.githubusercontent.com/lianying1716/platform-api/assets/shots/accounts.jpg" alt="账号中心"><br><sub><b>账号中心</b> · 六平台登录态，掉线自动体检</sub></td>
+<td width="50%" align="center"><img src="docs/assets/shots/overview.jpg" alt="总览"><br><sub><b>总览</b> · 素材总量、时长、账号覆盖</sub></td>
+<td width="50%" align="center"><img src="docs/assets/shots/accounts.jpg" alt="账号中心"><br><sub><b>账号中心</b> · 六平台登录态，掉线自动体检</sub></td>
 </tr>
 <tr>
-<td width="50%" align="center"><img src="https://raw.githubusercontent.com/lianying1716/platform-api/assets/shots/crawl.jpg" alt="关键词采集"><br><sub><b>关键词采集</b> · 按关键词发现作品，门槛触发评论</sub></td>
-<td width="50%" align="center"><img src="https://raw.githubusercontent.com/lianying1716/platform-api/assets/shots/assets-videos.jpg" alt="素材库"><br><sub><b>素材库</b> · 按平台 / 账号 / 分类筛选，可播放</sub></td>
+<td width="50%" align="center"><img src="docs/assets/shots/crawl.jpg" alt="关键词采集"><br><sub><b>关键词采集</b> · 按关键词发现作品，门槛触发评论</sub></td>
+<td width="50%" align="center"><img src="docs/assets/shots/assets-videos.jpg" alt="素材库"><br><sub><b>素材库</b> · 按平台 / 账号 / 分类筛选，可播放</sub></td>
 </tr>
 <tr>
-<td width="50%" align="center"><img src="https://raw.githubusercontent.com/lianying1716/platform-api/assets/shots/transcript.jpg" alt="转录与拆解"><br><sub><b>转录与分档加工</b> · 转录、视频理解、爆款拆解</sub></td>
-<td width="50%" align="center"><img src="https://raw.githubusercontent.com/lianying1716/platform-api/assets/shots/pipeline.jpg" alt="处理队列"><br><sub><b>处理队列</b> · 下载 / 转录 / 采集任务与进度</sub></td>
+<td width="50%" align="center"><img src="docs/assets/shots/transcript.jpg" alt="转录与拆解"><br><sub><b>转录与分档加工</b> · 转录、视频理解、爆款拆解</sub></td>
+<td width="50%" align="center"><img src="docs/assets/shots/pipeline.jpg" alt="处理队列"><br><sub><b>处理队列</b> · 下载 / 转录 / 采集任务与进度</sub></td>
 </tr>
 </table>
 
@@ -108,7 +108,7 @@
 ### 方式 A · Docker Compose（推荐，生产用这个）
 
 ```bash
-git clone https://github.com/lianying1716/platform-api.git
+git clone https://github.com/ly1713/platform-api.git
 cd platform-api
 cp .env.example .env
 
@@ -133,7 +133,7 @@ docker compose up -d          # 起 api + worker + postgres，首次自动迁移
 安装前需要 `uv` 与 `ffmpeg`；缺任何一个脚本会在改动环境前明确退出。
 
 ```bash
-git clone https://github.com/lianying1716/platform-api.git
+git clone https://github.com/ly1713/platform-api.git
 cd platform-api
 ./scripts/install-local.sh
 ```
@@ -202,7 +202,7 @@ uv sync --extra mcp                                             # 接入 Claude 
    - 有（Linux/NAS）：走 Docker，git clone 后 `cp .env.example .env`、
      生成 PLATFORM_CREDENTIAL_ENC_KEY、`docker compose up -d`。
    - 没有（典型是 macOS）：**不要试图装 Docker**，直接用仓库自带的无 Docker 安装脚本。
-2. git clone https://github.com/lianying1716/platform-api.git 到当前目录。
+2. git clone https://github.com/ly1713/platform-api.git 到当前目录。
 3. cd platform-api
 4. 没有 Docker 时直接跑：`./scripts/install-local.sh`
    （它用 uv + SQLite 装好并启动，自动生成密钥到 data/secret.key，最后打印访问地址）
@@ -338,11 +338,12 @@ uv run pytest tests/ -q          # 默认 SQLite，覆盖大部分逻辑
 
 ## 设计文档
 
-架构与设计文档在配套的**工作台仓库** [lianying1716/xsai-workbench](https://github.com/lianying1716/xsai-workbench)（需求、分期计划、品牌资产、宣传片工程）：
+架构与设计文档在配套的**工作台目录** `xsai-workbench/`（需求、分期计划、品牌资产、宣传片工程）。
+该目录是本地工作区，未发布到 GitHub，所以这里不写外链：
 
-- 需求与设计：[`workbench-requirements-and-design-v1.md`](https://github.com/lianying1716/xsai-workbench/blob/main/docs/workbench-requirements-and-design-v1.md)
-- 开发总纲：[`development-master-plan.md`](https://github.com/lianying1716/xsai-workbench/blob/main/docs/development-master-plan.md)
-- 用途声明与第三方合规：[`license-and-usage-compliance.md`](https://github.com/lianying1716/xsai-workbench/blob/main/docs/license-and-usage-compliance.md)
+- 需求与设计：`docs/workbench-requirements-and-design-v1.md`
+- 开发总纲：`docs/development-master-plan.md`
+- 用途声明与第三方合规：`docs/license-and-usage-compliance.md`
 
 ---
 

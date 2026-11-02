@@ -18,7 +18,7 @@ import httpx
 # 显式拒绝空格、分号、&、|、$、/ 等一切可能被 shell 解释或路径穿越的字符。
 _VERSION_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.]+)?(?:\+[0-9A-Za-z.]+)?$")
 
-DEFAULT_REPO = "lianying1716/platform-api"
+DEFAULT_REPO = "ly1713/platform-api"
 
 
 def load_current_version() -> str:

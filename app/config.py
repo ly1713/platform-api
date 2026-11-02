@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     # 后端调 updater 的共享密钥（仅内网传递）；为空则拒绝调用。
     updater_token: str = ""
     # 检查更新用的 GitHub 仓库。
-    update_repo: str = "lianying1716/platform-api"
+    update_repo: str = "ly1713/platform-api"
     # 可选 GitHub token：未认证 API 按出口 IP 每小时仅 60 次，多个实例共享
     # 同一 NAT 时很容易耗尽，导致版本页无法检查更新。只读公开仓库的 fine-grained
     # token（或无权限 PAT）即可；token 只随 Authorization 头发给 api.github.com。
