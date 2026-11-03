@@ -397,6 +397,8 @@ def update_breakdown_settings_api(body: dict, db: Session = Depends(get_db)):
         # 转录上限过小会让拆解只剩开头几秒，过大则可能撑爆模型上下文；
         # 上限按 200k 字符给（远超主流模型 128k token 的上下文）。
         "transcript_limit": (1000, 200_000),
+        # 推理模型输出 2k 字符 JSON 实测最长 239 秒；低于 120 秒会误判成失败。
+        "timeout_sec": (30, 1800),
     }
     normalized: dict[str, str] = {}
     for short, value in (body or {}).items():

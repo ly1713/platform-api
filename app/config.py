@@ -96,7 +96,10 @@ class Settings(BaseSettings):
     # documented "no overrides" default instead of failing inside json.loads().
     platform_proxies: Annotated[dict, NoDecode] = {}
     # 转录默认模型与设备（faster-whisper）
-    whisper_model: str = "base"
+    # 默认 medium/int8：CPU 上同一条 48 秒口播，base 只认对 3/12 个专有名词，
+    # medium 认对 11/12，耗时 47s → 100s。拆解的所有结论都建立在转录之上，
+    # 名字听错的代价远大于多等一分钟。
+    whisper_model: str = "medium"
     whisper_device: str = "auto"  # auto / cpu / cuda
     whisper_compute_type: str = "int8"
     # 旧版 LLM 环境变量仅用于一次性认领（见 legacy_llm_migration）。新部署请在

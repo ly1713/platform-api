@@ -393,6 +393,7 @@ export interface BreakdownSettingsOut {
   "publish_within_days": number
   "match_rule": string
   "transcript_limit"?: number
+  "timeout_sec"?: number
   "auto_transcribe": boolean
   "auto_understand": boolean
   "auto_breakdown": boolean

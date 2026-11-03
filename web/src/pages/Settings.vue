@@ -245,8 +245,9 @@
           <el-form-item label="视频内联上限 video_max_mb">
             <el-input-number v-model="proc.video_max_mb" :min="0" :step="1" :precision="2" />
             <span class="detail">
-              超过上限会先压到 720p/CRF30、再压到 480p/CRF34 才送入模型。压得越狠，
-              画面里的小字和 UI 细节越糊，视频理解的画面描述也越不可靠；模型支持大请求时建议调高。
+              超过上限会按「短边」逐级压缩：720 → 540 → 480 像素（CRF 30/32/34）。
+              实测短边 ≥480 时画面文字仍可读，≤360 时 24px 小字基本读不出来；
+              压得越狠，视频理解的画面描述越不可靠。模型支持大请求时建议调高。
             </span>
           </el-form-item>
           <el-form-item label="封面内联上限 cover_max_mb">
@@ -321,6 +322,13 @@
             <span class="detail">
               送入拆解的转录最多多少字符（默认 24000，约 20 分钟口播）。超出的部分会被截断，
               并在提示词里明确告知模型「已截断」，避免它把缺失当成视频结尾。
+            </span>
+          </el-form-item>
+          <el-form-item label="单次超时秒数 timeout_sec">
+            <el-input-number v-model="bd.timeout_sec" :min="30" :max="1800" :step="30" :precision="0" />
+            <span class="detail">
+              拆解一次最多等多久（默认 300 秒）。带推理的模型实测要 80~240 秒，
+              设得太短会把「正在思考」当成失败并切备用模型，白花一次调用。
             </span>
           </el-form-item>
           <el-divider content-position="left">命中后自动执行</el-divider>
@@ -893,7 +901,7 @@ const proc = reactive<any>({
 const bd = reactive<any>({
   prompt: '', viral_multiple: 3,
   min_play: 0, min_like: 0, min_engagement_rate: 0, publish_within_days: 0,
-  match_rule: 'any', transcript_limit: 24000,
+  match_rule: 'any', transcript_limit: 24000, timeout_sec: 300,
   auto_transcribe: true, auto_understand: false, auto_breakdown: false,
 })
 
@@ -907,6 +915,7 @@ async function loadBreakdownSettings() {
   bd.publish_within_days = data.publish_within_days ?? 0
   bd.match_rule = data.match_rule ?? 'any'
   bd.transcript_limit = data.transcript_limit ?? 24000
+  bd.timeout_sec = data.timeout_sec ?? 300
   bd.auto_transcribe = data.auto_transcribe ?? true
   bd.auto_understand = data.auto_understand ?? false
   bd.auto_breakdown = data.auto_breakdown ?? false
@@ -925,6 +934,7 @@ async function saveBreakdownSettings() {
       publish_within_days: bd.publish_within_days,
       match_rule: bd.match_rule,
       transcript_limit: bd.transcript_limit,
+      timeout_sec: bd.timeout_sec,
       auto_transcribe: bd.auto_transcribe,
       auto_understand: bd.auto_understand,
       auto_breakdown: bd.auto_breakdown,

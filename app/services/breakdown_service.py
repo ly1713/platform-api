@@ -374,7 +374,14 @@ async def run_breakdown(
                 job_id=job_id,
             )
 
-        result = await breakdown.run_llm(system, user, call_model=call_model)
+        # 带推理的模型输出 2k 字符 JSON 实测 80~240 秒；写死 90 秒会把「正在思考」
+        # 误判成失败，白跑一次主备切换还把结果记成 error。
+        result = await breakdown.run_llm(
+            system,
+            user,
+            call_model=call_model,
+            timeout=float(s.get("timeout_sec") or 300),
+        )
         parsed = result.get("data") or {}
         if not isinstance(parsed, dict):
             raise ValueError("拆解返回不是 JSON 对象")

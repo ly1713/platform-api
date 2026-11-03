@@ -552,6 +552,8 @@ class BreakdownSettingsOut(BaseModel):
     match_rule: str
     # 送入拆解的转录字符上限（长视频尾部信息不再被静默丢弃）。
     transcript_limit: int = 24000
+    # 单次拆解的模型超时。带推理的模型实测需要 80~240 秒。
+    timeout_sec: int = 300
     auto_transcribe: bool
     auto_understand: bool
     auto_breakdown: bool

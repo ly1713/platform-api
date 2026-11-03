@@ -243,7 +243,7 @@ def test_run_understand_oversize_video_triggers_compress(monkeypatch, session, t
 
     def fake_compress(video_path, max_mb, work_dir):
         seen["called"] = True
-        return video_path
+        return video_path, {"compressed": False}
 
     monkeypatch.setattr(svc, "_ensure_inline", fake_compress)
     monkeypatch.setattr(svc, "classify", _fake_classify({"type": "commerce", "confidence": 0.9, "reason": "x", "signals": []}))
@@ -425,7 +425,7 @@ def test_run_understand_missing_content_raises_input_error(monkeypatch, session)
 
 
 def test_ensure_inline_second_pass_when_still_oversize(monkeypatch, session, tmp_path):
-    """Minor#2：压一次仍超限 → 再降一档（两档），产出 <= 上限。"""
+    """Minor#2：压一次仍超限 → 再降一档（三档），产出 <= 上限。"""
     src = tmp_path / "src.mp4"
     src.write_bytes(b"\x00" * 1000)
     calls = []
@@ -445,7 +445,41 @@ def test_ensure_inline_second_pass_when_still_oversize(monkeypatch, session, tmp
         return _P()
 
     monkeypatch.setattr(svc.subprocess, "run", fake_run)
-    out = svc._ensure_inline(str(src), 0.0001, str(tmp_path / "_inline"))
+    out, info = svc._ensure_inline(str(src), 0.0001, str(tmp_path / "_inline"))
 
     assert len(calls) == 2
     assert os.path.getsize(out) <= 0.0001 * svc._MB
+    assert info["compressed"] is True
+    assert info["scale"] == 540  # 第二档短边
+    assert info["crf"] == "32"
+
+
+def test_ensure_inline_scales_by_short_side_for_portrait():
+    """竖屏必须按短边缩放：只限高度会把 1080x1920 压成 406x720，画面文字全糊。
+
+    实测同一段竖屏口播：按高度压到 720 模型只能读回 72% 的文字，
+    按短边压到 720 能读回 100%，体积只差一倍。
+    """
+    portrait = svc._short_side_filter(720)
+    landscape = svc._short_side_filter(720)
+    # 同一套滤镜，靠 if(gte(iw,ih)) 在 ffmpeg 里按方向分流：
+    # 横屏限高、竖屏限宽，短边都不超过 720。
+    assert "gte(iw,ih)" in portrait
+    assert "min(720,iw)" in portrait and "min(720,ih)" in portrait
+    assert portrait == landscape
+
+
+def test_ensure_inline_reports_compression_to_prompt(monkeypatch, session):
+    """压缩信息必须进入理解提示词：模型不会自己知道小字已糊。"""
+    prompt = svc.build_prompt(
+        "other", "其他", "通用关注点", [], "转录内容",
+        compression={"compressed": True, "scale": 480, "crf": "34", "kbps": 210},
+    )
+    assert "短边 480" in prompt
+    assert "210 kbps" in prompt
+    assert "画质限制" in prompt
+
+
+def test_build_prompt_has_no_quality_note_when_not_compressed():
+    prompt = svc.build_prompt("other", "其他", "关注点", [], "转录", compression=None)
+    assert "画质说明" not in prompt

@@ -28,6 +28,9 @@ BREAKDOWN_KEYS: dict[str, str] = {
     "match_rule": "breakdown_match_rule",  # any / all
     # 送入拆解的转录字符上限：写死会让长视频尾部信息丢失，见 modules/breakdown.py。
     "transcript_limit": "breakdown_transcript_limit",
+    # 单次拆解的模型超时。带推理的模型输出 2k 字符 JSON 实测要 80~240 秒，
+    # 90 秒默认值会把「模型在思考」误判成失败并触发主备切换。
+    "timeout_sec": "breakdown_timeout_sec",
     # 自动执行链：命中阀门的爆款自动转录 / 视频理解 / 拆解
     "auto_transcribe": "breakdown_auto_transcribe",
     "auto_understand": "breakdown_auto_understand",
@@ -72,6 +75,8 @@ _DEFAULTS: dict[str, tuple[object, str]] = {
     "breakdown_publish_within_days": (0, "int"),
     # 24k 字符约等于 20 分钟口播；再长就由用户在设置页按自己的模型上下文放宽。
     "breakdown_transcript_limit": (24000, "int"),
+    # 300 秒覆盖实测最长 239 秒；再长说明模型本身不可用，交给主备切换。
+    "breakdown_timeout_sec": (300, "int"),
     "breakdown_match_rule": ("any", "str"),
     "breakdown_auto_transcribe": (True, "bool"),
     "breakdown_auto_understand": (False, "bool"),

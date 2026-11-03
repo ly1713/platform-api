@@ -66,6 +66,8 @@ def build_prompt(
     focus: str,
     dimensions: list[dict],
     transcript: str,
+    *,
+    compression: dict | None = None,
 ) -> str:
     """按类型拼装理解提示词（纯函数）。
 
@@ -75,6 +77,8 @@ def build_prompt(
         focus: 该类型的「关注点」段落（类型区分的灵魂）。
         dimensions: 该类型维度清单（通用 + 专属），每项 ``{key,name,ask}``。
         transcript: 转录全文（可为空）。
+        compression: `_ensure_inline` 的压缩信息；画面被压过时要把这件事告诉模型，
+            否则它会把「小字看不清」当成「视频里没有字」，把缺失描述成不存在。
     """
     dim_lines = "\n".join(f"- {d['key']}（{d['name']}）：{d['ask']}" for d in dimensions)
     body = (
@@ -89,6 +93,17 @@ def build_prompt(
         "【约束】只依据视频与给定转录；不确定或看不到的字段填 null；"
         "不要编造品牌、人名、价格等视频中不存在的细节。"
     )
+    info = compression or {}
+    if info.get("compressed"):
+        # 压缩档位是确定性已知的，直接报给模型。实测竖屏 1080x1920 按短边压到
+        # 720 时小字仍可读，压到 480 时 24px 字基本读不出——模型需要知道
+        # 「看不清是画质所致」，才不会把没读到的东西写成「不存在」。
+        body += (
+            f"\n【画质说明】为控制请求体积，画面已压缩到短边 {info.get('scale')} 像素、"
+            f"约 {info.get('kbps')} kbps。小字、角标、细小的 UI 文字可能已经糊掉；"
+            "看不清的字段一律填 null，并在 summary 里注明「受画质限制未能确认」，"
+            "不要据此断言画面里没有该内容。"
+        )
     text = (transcript or "").strip()[:_TRANSCRIPT_LIMIT]
     if text:
         body += f"\n【参考转录】\n{text}"
@@ -221,28 +236,66 @@ async def _ensure_cover(content: ContentItem, work_dir: str, max_mb: float) -> s
         return None
 
 
-def _ensure_inline(video_path: str, max_mb: float, work_dir: str) -> str:
-    """体积超限时用 ffmpeg 降质压缩到内联上限以下，返回可送入模型的路径。
+def _short_side_filter(short_side: int) -> str:
+    """按「短边」缩放的 ffmpeg 滤镜：横屏压高度，竖屏压宽度。
 
-    未超限 / 文件不可读 / max_mb<=0 → 原样返回。压缩失败抛 RuntimeError（带 stderr 摘要）。
+    早期写成 `scale=-2:min(720,ih)`（只限高度），竖屏 1080x1920 会被压成 406x720，
+    宽度只剩 37.5%，画面文字直接糊掉。实测同一段竖屏素材：按高度压到 720 时
+    模型只能读回 72% 的文字，按短边压到 720 时能读回 100%，而体积只差一倍。
+    竖屏是抖音/快手/小红书的主流体裁，必须按短边算。
+    """
+    return (
+        f"scale=w='if(gte(iw,ih),-2,min({short_side},iw))':"
+        f"h='if(gte(iw,ih),min({short_side},ih),-2)'"
+    )
+
+
+def _video_bitrate_kbps(video_path: str) -> int:
+    """视频流码率（kbps）；探测失败返回 0（不影响主流程）。"""
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe", "-v", "error", "-select_streams", "v:0",
+                "-show_entries", "stream=bit_rate",
+                "-of", "default=nw=1:nk=1", video_path,
+            ],
+            capture_output=True,
+            text=True,
+        )
+        return int(str(proc.stdout).strip() or 0) // 1000
+    except (OSError, ValueError):
+        return 0
+
+
+def _ensure_inline(video_path: str, max_mb: float, work_dir: str) -> tuple[str, dict]:
+    """体积超限时用 ffmpeg 降质压缩到内联上限以下。
+
+    Returns:
+        ``(可送入模型的路径, 压缩信息)``。压缩信息形如
+        ``{"compressed": True, "scale": 720, "crf": 30, "kbps": 210}``，
+        未压缩时为 ``{"compressed": False}``。调用方需要把「画面被压过」
+        写进提示词——模型不会自己知道小字已经糊了。
+
+    Raises:
+        RuntimeError: 压缩失败（带 stderr 摘要）；压缩后仍超限由 `vision.understand` 兜底。
     """
     if max_mb and max_mb > 0:
         try:
             size = os.path.getsize(video_path)
         except OSError:
-            return video_path
+            return video_path, {"compressed": False}
         if size > max_mb * _MB:
             os.makedirs(work_dir, exist_ok=True)
             out = os.path.join(work_dir, "inline.mp4")
-            # 逐级降质：720p/CRF30 → 480p/CRF34。低码率长视频压一次可能仍超限，
-            # 压完仍超限则再降一档；两档后返回，由 vision.understand 体积校验兜底。
-            attempts = [("720", "30"), ("480", "34")]
-            for scale_h, crf in attempts:
-                # `scale=-2:min(<h>\,ih)`：宽度 -2 保持偶数比例，高度不放大超过原高。
+            # 逐级降质：短边 720/CRF30 → 540/CRF32 → 480/CRF34。每降一档，
+            # 画面里小字的像素高度就掉一截；三档之后还不满足体积上限，
+            # 说明这条视频分钟后只能用极低码率，由调用方在提示词里明说。
+            attempts = [(720, "30"), (540, "32"), (480, "34")]
+            for short_side, crf in attempts:
                 proc = subprocess.run(
                     [
                         "ffmpeg", "-hide_banner", "-nostdin", "-y", "-i", video_path,
-                        "-vf", rf"scale=-2:min({scale_h}\,ih)",
+                        "-vf", _short_side_filter(short_side),
                         "-c:v", "libx264", "-crf", crf, "-preset", "veryfast",
                         "-c:a", "aac", "-b:a", "96k", out,
                     ],
@@ -254,9 +307,15 @@ def _ensure_inline(video_path: str, max_mb: float, work_dir: str) -> str:
                     raise RuntimeError("ffmpeg 压缩视频失败: " + " | ".join(tail))
                 if os.path.getsize(out) <= max_mb * _MB:
                     break
-            logger.info("视频内联压缩: %s -> %s", video_path, out)
-            return out
-    return video_path
+            info = {
+                "compressed": True,
+                "scale": short_side,
+                "crf": crf,
+                "kbps": _video_bitrate_kbps(out),
+            }
+            logger.info("视频内联压缩: %s -> %s (%s)", video_path, out, info)
+            return out, info
+    return video_path, {"compressed": False}
 
 
 # --------------------------------------------------------------------------- 组合服务
@@ -365,12 +424,17 @@ async def run_understand(
 
         # ② 选提示词（未知类型归一 other）
         category, label, focus, dimensions = _select_prompt(db, category)
-        prompt = build_prompt(category, label, focus, dimensions, transcript)
 
         # ③ 视频理解（超限先压缩）
         video_path = _asset_video_path(db, asset)
         work_dir = os.path.join(os.path.dirname(video_path), "_inline")
-        inline_path = _ensure_inline(video_path, float(s.get("video_max_mb", 15)), work_dir)
+        inline_path, compression = _ensure_inline(
+            video_path, float(s.get("video_max_mb", 15)), work_dir
+        )
+        prompt = build_prompt(
+            category, label, focus, dimensions, transcript,
+            compression=compression,
+        )
         result = await vision.understand(
             inline_path,
             prompt,
