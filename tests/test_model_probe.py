@@ -27,7 +27,8 @@ def test_probe_text_image_video_success(monkeypatch, session, tmp_path):
     monkeypatch.setattr(model_probe, "_decrypt_key", lambda _p: "k")
     monkeypatch.setattr(model_probe, "_red_image", lambda _color=None: b"PNG")
     monkeypatch.setattr(model_probe, "_choose_probe_color", lambda: "red")
-    monkeypatch.setattr(model_probe, "_red_blue_video", lambda *_a, **_k: b"MP4")
+    monkeypatch.setattr(model_probe, "_sequence_video", lambda *_a, **_k: b"MP4")
+    monkeypatch.setattr(model_probe, "_probe_token", lambda: "KMX7")
     # 视频探测以 shutil.which("ffmpeg") 为门：无 ffmpeg 的机器上会走"跳过"分支而非探测。
     # 这里断言的是"探测成功"路径，故强制 ffmpeg 可用，避免依赖 CI 是否装了 ffmpeg。
     monkeypatch.setattr(model_probe.shutil, "which", lambda _name: "/usr/bin/ffmpeg")
@@ -42,7 +43,11 @@ def test_probe_text_image_video_success(monkeypatch, session, tmp_path):
     monkeypatch.setattr(model_probe, "_chat", fake_chat)
 
     async def fake_video_chat(*args, **kwargs):
-        return {"text": '{"first": "red", "second": "blue"}', "usage": {}, "model": "m"}
+        return {
+            "text": '{"colors": ["red", "blue", "green"], "text": "KMX7"}',
+            "usage": {},
+            "model": "m",
+        }
 
     monkeypatch.setattr(model_probe, "_video_chat", fake_video_chat)
     out = asyncio.run(model_probe.probe_model(session, model.id))
@@ -51,7 +56,65 @@ def test_probe_text_image_video_success(monkeypatch, session, tmp_path):
     assert caps["json"]["value"] is True
     assert caps["image"]["value"] is True
     assert caps["video"]["value"] is True
+    assert caps["video"]["sequence_ok"] is True
+    assert caps["video"]["text_ok"] is True
     assert out.probe_status == "passed"
+
+
+def test_probe_video_requires_temporal_order(monkeypatch, session):
+    """只报对颜色、顺序错 → 不算读到了视频（防止只读首帧蒙过）。"""
+    _provider, model = _seed(session)
+    monkeypatch.setattr(model_probe, "_decrypt_key", lambda _p: "k")
+    monkeypatch.setattr(model_probe, "_sequence_video", lambda *_a, **_k: b"MP4")
+    monkeypatch.setattr(model_probe, "_probe_token", lambda: "KMX7")
+    monkeypatch.setattr(model_probe.shutil, "which", lambda _name: "/usr/bin/ffmpeg")
+
+    async def fake_chat(*args, **kwargs):
+        return {"text": '{"ok": true, "echo": "workbench"}', "usage": {}, "model": "m"}
+
+    async def fake_video_chat(*args, **kwargs):
+        return {
+            "text": '{"colors": ["red", "red", "red"], "text": "KMX7"}',
+            "usage": {},
+            "model": "m",
+        }
+
+    monkeypatch.setattr(model_probe, "_chat", fake_chat)
+    monkeypatch.setattr(model_probe, "_video_chat", fake_video_chat)
+    out = asyncio.run(
+        model_probe.probe_model(session, model.id, text=False, image=False, video=True)
+    )
+    assert out.capabilities["video"]["value"] is False
+    assert out.capabilities["video"]["sequence_ok"] is False
+    assert "顺序" in out.capabilities["video"]["detail"]
+
+
+def test_probe_video_requires_on_screen_text(monkeypatch, session):
+    """顺序对、但读不到画面文字 → 判不通过（防「只转述字幕/低清抽帧」）。"""
+    _provider, model = _seed(session)
+    monkeypatch.setattr(model_probe, "_decrypt_key", lambda _p: "k")
+    monkeypatch.setattr(model_probe, "_sequence_video", lambda *_a, **_k: b"MP4")
+    monkeypatch.setattr(model_probe, "_probe_token", lambda: "KMX7")
+    monkeypatch.setattr(model_probe.shutil, "which", lambda _name: "/usr/bin/ffmpeg")
+
+    async def fake_chat(*args, **kwargs):
+        return {"text": '{"ok": true, "echo": "workbench"}', "usage": {}, "model": "m"}
+
+    async def fake_video_chat(*args, **kwargs):
+        return {
+            "text": '{"colors": ["red", "blue", "green"], "text": "看不清"}',
+            "usage": {},
+            "model": "m",
+        }
+
+    monkeypatch.setattr(model_probe, "_chat", fake_chat)
+    monkeypatch.setattr(model_probe, "_video_chat", fake_video_chat)
+    out = asyncio.run(
+        model_probe.probe_model(session, model.id, text=False, image=False, video=True)
+    )
+    assert out.capabilities["video"]["value"] is False
+    assert out.capabilities["video"]["sequence_ok"] is True
+    assert out.capabilities["video"]["text_ok"] is False
 
 
 @pytest.mark.parametrize("answer", ["红色", "红", "RED", "red"])

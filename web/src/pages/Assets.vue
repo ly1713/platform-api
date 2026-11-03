@@ -350,7 +350,7 @@
         <section v-show="detailTab === 'understand'" class="dt-pane">
 
         <p class="dt-hint vision-hint">
-          视频理解必须使用支持视觉输入的模型；纯文本模型看不到画面。
+          视频理解把整段视频经模型的视频输入接口送入，需要模型真能按时间顺序读画面；纯文本模型做不到。
           <router-link to="/models">前往模型接入</router-link>
         </p>
 
@@ -397,7 +397,8 @@
         <!-- Tab: 爆款拆解 -->
         <section v-show="detailTab === 'breakdown'" class="dt-pane">
         <p class="dt-hint vision-hint">
-          爆款拆解依赖逐镜头画面分析，请先把「视频理解」分配给支持视觉输入的模型（如 Kimi K3、MiMo、Qwen3.8 Flash、Gemini 3.8 Flash）。
+          爆款拆解读的是转录和「视频理解」产出的结构化描述，自己不看画面；需要视觉的是前置的视频理解。
+          前置没完成时会先排队，完成后自动继续。
           <router-link to="/models">前往模型接入</router-link>
         </p>
         <p class="dt-hint">

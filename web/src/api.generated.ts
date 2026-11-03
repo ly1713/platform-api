@@ -392,6 +392,7 @@ export interface BreakdownSettingsOut {
   "min_engagement_rate": number
   "publish_within_days": number
   "match_rule": string
+  "transcript_limit"?: number
   "auto_transcribe": boolean
   "auto_understand": boolean
   "auto_breakdown": boolean

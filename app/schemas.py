@@ -550,6 +550,8 @@ class BreakdownSettingsOut(BaseModel):
     min_engagement_rate: float
     publish_within_days: int
     match_rule: str
+    # 送入拆解的转录字符上限（长视频尾部信息不再被静默丢弃）。
+    transcript_limit: int = 24000
     auto_transcribe: bool
     auto_understand: bool
     auto_breakdown: bool

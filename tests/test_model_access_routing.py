@@ -255,6 +255,80 @@ def test_legacy_capability_is_usable_only_at_same_revision(session):
     assert stale["source"] == "stale"
 
 
+def test_probe_capability_is_stale_after_probe_upgrade(session):
+    """探针判定变严后，旧版本得到的绿灯必须失效，否则等于新探针白做。"""
+    from app.services.model_access_service import capabilities_of
+    from app.services.model_probe import _PROBE_VERSION
+
+    provider = AiProvider(
+        name="p", preset_key="custom", protocol="openai", base_url="https://api.example.com/v1",
+        api_key_encrypted="cipher", config_revision=1,
+    )
+    session.add(provider)
+    session.flush()
+    model = AiModel(
+        provider_id=provider.id,
+        model_key="old-probe",
+        capabilities={
+            "video": {
+                "value": True,
+                "source": "probe",
+                "config_revision": 1,
+                "protocol": "openai",
+                "probe_version": "v0-something-older",
+            },
+        },
+    )
+    session.add(model)
+    session.commit()
+
+    stale = capabilities_of(model, provider)["video"]
+    assert stale["value"] is False
+    assert stale["source"] == "stale"
+    assert "检测方法已升级" in stale["detail"]
+
+    # 当前版本的结论立即可用。
+    model.capabilities = {
+        "video": {
+            "value": True,
+            "source": "probe",
+            "config_revision": 1,
+            "protocol": "openai",
+            "probe_version": _PROBE_VERSION,
+        },
+    }
+    session.commit()
+    assert capabilities_of(model, provider)["video"]["value"] is True
+
+
+def test_manual_override_survives_probe_upgrade(session):
+    """手工覆盖是用户判断，不因探针换版失效。"""
+    from app.services.model_access_service import capabilities_of
+
+    provider = AiProvider(
+        name="p", preset_key="custom", protocol="openai", base_url="https://api.example.com/v1",
+        api_key_encrypted="cipher", config_revision=1,
+    )
+    session.add(provider)
+    session.flush()
+    model = AiModel(
+        provider_id=provider.id,
+        model_key="manual",
+        capabilities={
+            "video": {
+                "value": True,
+                "source": "manual_override",
+                "config_revision": 1,
+                "protocol": "openai",
+            },
+        },
+    )
+    session.add(model)
+    session.commit()
+
+    assert capabilities_of(model, provider)["video"]["value"] is True
+
+
 def test_cancelled_call_finishes_attempt_as_error(monkeypatch):
     """A cancelled request must not leave a permanent ``running`` audit row."""
     engine = _engine()

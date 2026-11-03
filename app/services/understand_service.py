@@ -384,6 +384,9 @@ async def run_understand(
         dims = {str(k): v for k, v in dims.items()}
         timeline = parsed.get("timeline") if isinstance(parsed.get("timeline"), list) else []
         usage = result.get("usage") if isinstance(result.get("usage"), dict) else {}
+        # 提示词要求模型给出 confidence。之前解析完就丢掉了，导致拆解无法判断
+        # 「这段画面描述是看清了还是猜的」，只能一律当事实引用。
+        understanding_confidence = _coerce_conf(parsed.get("confidence"))
 
         existing = db.scalar(select(VideoUnderstanding).where(VideoUnderstanding.asset_id == asset_id))
         if existing is None:
@@ -393,6 +396,7 @@ async def run_understand(
         existing.category_confidence = conf
         existing.category_reason = reason[:512]
         existing.low_confidence = low_confidence
+        existing.understanding_confidence = understanding_confidence
         existing.dimensions = dims
         existing.summary = summary
         existing.timeline = timeline

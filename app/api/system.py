@@ -394,6 +394,9 @@ def update_breakdown_settings_api(body: dict, db: Session = Depends(get_db)):
         "min_play": (0, 10 ** 12),
         "min_like": (0, 10 ** 12),
         "publish_within_days": (0, 3650),
+        # 转录上限过小会让拆解只剩开头几秒，过大则可能撑爆模型上下文；
+        # 上限按 200k 字符给（远超主流模型 128k token 的上下文）。
+        "transcript_limit": (1000, 200_000),
     }
     normalized: dict[str, str] = {}
     for short, value in (body or {}).items():

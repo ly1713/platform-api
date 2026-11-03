@@ -155,7 +155,8 @@ def test_run_breakdown_persists_row(monkeypatch, session):
     assert row.data_context["play"] == 1000
     assert row.understanding_available is True  # 前置视频理解已完成
     assert row.model == "gw-model"  # 用响应里的 model，而非入参
-    assert row.prompt_version == "v1"
+    # v2：转录改为「只发带时间戳的分段」，并新增截断/低置信标注。
+    assert row.prompt_version == "v2"
     assert row.usage == {"total_tokens": 123}
 
 
@@ -328,6 +329,80 @@ def test_run_breakdown_includes_comments_in_prompt(monkeypatch, session):
     asyncio.run(svc.run_breakdown(session, a.id))
     assert "求链接" in cap["user"]
     assert "阿明" in cap["user"]
+
+
+def test_breakdown_runs_on_text_slot_and_never_sends_video(monkeypatch, session):
+    """拆解是纯文本工作：走 text_analysis 槽位，不带任何视频/图片。
+
+    这条测试锁住一个曾经被写错的说法——「爆款拆解必须使用多模态视觉模型」。
+    拆解只吃转录 + 视频理解产出的 JSON，模型有没有视觉能力不影响它；
+    真正需要视觉的是前置的视频理解步骤。
+    """
+    from app.models import ModelAssignment
+    from app.services.model_access_service import _CAPABILITY_REQUIREMENTS
+
+    _llm_settings(session)
+    c = _seed_content(session)
+    a = _seed_asset(session, c)
+    session.commit()
+    cap: dict = {}
+    _patch_llm(monkeypatch, capture=cap)
+    asyncio.run(svc.run_breakdown(session, a.id))
+
+    # 1) 槽位要求里没有 image / video。
+    assert _CAPABILITY_REQUIREMENTS["text_analysis"] == ("text", "json")
+    # 2) 提示词是纯文本，模型也没收到视频参数。
+    assert isinstance(cap["system"], str) and isinstance(cap["user"], str)
+    assert "base64" not in cap["user"] and "video_url" not in cap["user"]
+    # 3) 落库的路由只记录 text_analysis。
+    from sqlalchemy import select
+
+    from app.models import ViralBreakdown
+
+    stored = session.scalar(select(ViralBreakdown).where(ViralBreakdown.asset_id == a.id))
+    assert set((stored.routing or {}).keys()) <= {"text_analysis"}
+
+
+def test_prompt_marks_low_confidence_understanding(monkeypatch, session):
+    """视频理解自评低时，提示词必须明说「可能不准」，不能当事实引用。"""
+    from sqlalchemy import select
+
+    from app.models import VideoUnderstanding
+
+    _llm_settings(session)
+    c = _seed_content(session)
+    a = _seed_asset(session, c)
+    row = session.scalar(select(VideoUnderstanding).where(VideoUnderstanding.asset_id == a.id))
+    row.understanding_confidence = 0.25
+    row.low_confidence = True
+    session.commit()
+
+    cap: dict = {}
+    _patch_llm(monkeypatch, capture=cap)
+    asyncio.run(svc.run_breakdown(session, a.id))
+    assert "置信度仅 0.25" in cap["user"]
+
+
+def test_long_transcript_is_truncated_with_explicit_notice(monkeypatch, session):
+    """超长转录要截断，但必须显式告知模型被截断，避免它把缺失当成视频结尾。"""
+    from sqlalchemy import select
+
+    from app.models import SystemSetting, Transcript
+
+    _llm_settings(session)
+    c = _seed_content(session)
+    a = _seed_asset(session, c)
+    long_text = "这是一句用于测试截断的转录。" * 2000  # 远超 200 字符上限
+    tr = session.scalar(select(Transcript).where(Transcript.asset_id == a.id))
+    tr.full_text = long_text
+    tr.segments = []
+    session.add(SystemSetting(key="breakdown_transcript_limit", value="200"))
+    session.commit()
+
+    cap: dict = {}
+    _patch_llm(monkeypatch, capture=cap)
+    asyncio.run(svc.run_breakdown(session, a.id))
+    assert "转录在此处被截断" in cap["user"]
 
 
 # ============================================================

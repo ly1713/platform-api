@@ -631,6 +631,9 @@ class VideoUnderstanding(Base):
     category_confidence: Mapped[float] = mapped_column(Float, default=0)
     category_reason: Mapped[str] = mapped_column(String(512), default="")
     low_confidence: Mapped[bool] = mapped_column(Boolean, default=False)  # 置信度低于阈值，供人工复核（设计 §4）
+    # 模型对「这份画面描述有多可信」的自评（0-1）。之前算出来就被丢弃，拆解因此
+    # 无法区分「确实看清了」和「只是猜的」，只能一律当事实引用。
+    understanding_confidence: Mapped[float] = mapped_column(Float, default=0)
     dimensions: Mapped[dict] = mapped_column(JSON, default=dict)  # 类型专属维度 → 值
     summary: Mapped[str] = mapped_column(Text, default="")
     timeline: Mapped[list] = mapped_column(JSON, default=list)

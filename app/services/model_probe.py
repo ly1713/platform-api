@@ -22,7 +22,19 @@ from app.modules import model_protocols
 
 logger = logging.getLogger("platform.model_probe")
 
-_PROBE_VERSION = "v1"
+# v2：视频探针从「2 秒纯色块」升级为「三帧彩色 + 画面文字序列」。
+# v1 只能证明「模型返回了红蓝」，纯图片模型、只读首帧的模型、甚至不看视频
+# 只猜颜色的模型都能蒙混过关；而拆解真正需要的是「按时间顺序读到画面里的
+# 内容」。存量的 v1 结论因此不再可信，见 `capabilities_of` 的版本判定。
+_PROBE_VERSION = "v2"
+
+# 探针视频的三种颜色，顺序即时间顺序。
+_VIDEO_SEQUENCE = (
+    ("red", (220, 30, 30)),
+    ("blue", (30, 60, 220)),
+    ("green", (30, 170, 80)),
+)
+
 _IMAGE_COLORS = {
     "red": (220, 30, 30),
     "blue": (30, 60, 220),
@@ -67,15 +79,51 @@ def _red_image(color: str | None = None) -> bytes:
     return buffer.getvalue()
 
 
-def _red_blue_video(work_dir: str | Path, *, seconds: int = 2) -> bytes:
-    """用 ffmpeg 生成前红后蓝的测试视频（2 秒，mp4）。"""
+def _probe_token() -> str:
+    """随机 4 位大写字母数字：防止模型靠常识或历史会话猜出画面文字。"""
+    alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+    return "".join(random.choice(alphabet) for _ in range(4))
+
+
+def _frame_png(rgb: tuple[int, int, int], token: str) -> bytes:
+    """单帧：纯色底 + 大号白字 token。字号够大才能在压缩后仍可辨认。"""
+    from PIL import Image, ImageDraw, ImageFont
+
+    image = Image.new("RGB", (640, 360), rgb)
+    draw = ImageDraw.Draw(image)
+    try:
+        font = ImageFont.load_default(size=96)
+    except TypeError:  # 老版本 Pillow 没有 size 参数
+        font = ImageFont.load_default()
+    # 居中：不依赖字体度量，左右各留等宽，视觉上足够正中。
+    draw.text((212, 128), token, font=font, fill=(255, 255, 255))
+    buffer = BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
+def _sequence_video(work_dir: str | Path, token: str, *, seconds: int = 3) -> bytes:
+    """生成「红 → 蓝 → 绿」三段、每段都写着同一个 token 的测试视频。
+
+    为什么是序列而不是单帧：单帧图像 + 纯色块无法区分「真的按时间读视频」和
+    「只看了一张缩略图」；拆解要的正是时间顺序上的画面变化，探针必须能证伪。
+    """
     out = Path(work_dir) / "probe.mp4"
-    half = max(1, seconds // 2)
-    filter_expr = (
-        f"color=c=red:s=64x64:d={half}[a];"
-        f"color=c=blue:s=64x64:d={seconds - half}[b];"
-        "[a][b]concat=n=2:v=1:a=0[out]"
-    )
+    frames_dir = Path(work_dir) / "frames"
+    frames_dir.mkdir(parents=True, exist_ok=True)
+
+    concat_lines: list[str] = []
+    for index, (_name, rgb) in enumerate(_VIDEO_SEQUENCE):
+        frame = frames_dir / f"{index}.png"
+        frame.write_bytes(_frame_png(rgb, token))
+        concat_lines.append(f"file '{frame}'")
+        concat_lines.append("duration 1")
+    # concat demuxer 需要最后一条重复，否则末段时长会被吞掉。
+    last_frame = frames_dir / f"{len(_VIDEO_SEQUENCE) - 1}.png"
+    concat_lines.append(f"file '{last_frame}'")
+    playlist = frames_dir / "list.txt"
+    playlist.write_text("\n".join(concat_lines) + "\n", encoding="utf-8")
+
     proc = subprocess.run(
         [
             "ffmpeg",
@@ -83,14 +131,20 @@ def _red_blue_video(work_dir: str | Path, *, seconds: int = 2) -> bytes:
             "-loglevel",
             "error",
             "-y",
-            "-filter_complex",
-            filter_expr,
-            "-map",
-            "[out]",
+            "-f",
+            "concat",
+            "-safe",
+            "0",
+            "-i",
+            str(playlist),
+            "-vf",
+            "fps=10,format=yuv420p",
             "-c:v",
             "libx264",
-            "-pix_fmt",
-            "yuv420p",
+            "-t",
+            str(seconds),
+            "-movflags",
+            "+faststart",
             str(out),
         ],
         capture_output=True,
@@ -445,31 +499,52 @@ async def probe_model(
             try:
                 import base64
 
+                token = _probe_token()
                 with tempfile.TemporaryDirectory(prefix="model-probe-") as work_dir:
-                    video_bytes = await asyncio.to_thread(_red_blue_video, work_dir)
+                    video_bytes = await asyncio.to_thread(_sequence_video, work_dir, token)
                 video_b64 = base64.b64encode(video_bytes).decode("ascii")
                 result = await _video_chat(
                     provider,
                     model.model_key,
                     video_b64,
-                    '观看视频后只输出 JSON：{"first": "第一个颜色", "second": "第二个颜色"}。',
+                    "这是一段按时间顺序播放的视频。只依据画面内容输出 JSON："
+                    '{"colors": ["三个颜色按出现顺序"], "text": "画面里出现的文字"}。'
+                    "不要猜，看不清就填 null。",
                     transport=transport,
                     api_key=api_key,
                     timeout=300,
                     protocol=effective_protocol,
                 )
-                parsed = _parse_json_text(result["text"])
-                first = _normalize_color((parsed or {}).get("first"))
-                second = _normalize_color((parsed or {}).get("second"))
-                ok = first == "red" and second == "blue"
-                detail = "通过红蓝视频探测" if ok else "模型未正确读取视频画面"
+                parsed = _parse_json_text(result["text"]) or {}
+                colors = [_normalize_color(c) for c in (parsed.get("colors") or [])]
+                expected = [name for name, _rgb in _VIDEO_SEQUENCE]
+                # 只认前缀匹配：多报比少报好，但顺序必须对。
+                order_ok = colors[: len(expected)] == expected
+                text_ok = str(parsed.get("text") or "").strip().upper().find(token) >= 0
+                ok = order_ok and text_ok
+                if ok:
+                    detail = "通过视频序列探测（三色顺序 + 画面文字均正确）"
+                elif not order_ok:
+                    detail = (
+                        "模型未按时间顺序读到画面：期望 "
+                        + "/".join(expected)
+                        + f"，实际 {colors or '空'}"
+                    )
+                else:
+                    detail = "模型读到了颜色但没读到画面文字：该模型可能只做低分辨率抽帧或转述字幕"
                 caps["video"] = _capability(
                     value=ok,
                     source="probe",
                     revision=revision,
                     protocol=effective_protocol,
                     detail=detail,
-                    extra=video_extra,
+                    extra={
+                        **video_extra,
+                        # 拆解用的正是「时间顺序 + 画面文字」，把这两项单独记账，
+                        # 失败时页面能直接告诉用户是哪一项不达标。
+                        "sequence_ok": order_ok,
+                        "text_ok": text_ok,
+                    },
                 )
                 statuses.append("ok" if ok else "failed")
             except Exception as exc:  # noqa: BLE001

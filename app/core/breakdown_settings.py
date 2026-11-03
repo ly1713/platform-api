@@ -26,6 +26,8 @@ BREAKDOWN_KEYS: dict[str, str] = {
     "min_engagement_rate": "breakdown_min_engagement_rate",
     "publish_within_days": "breakdown_publish_within_days",
     "match_rule": "breakdown_match_rule",  # any / all
+    # 送入拆解的转录字符上限：写死会让长视频尾部信息丢失，见 modules/breakdown.py。
+    "transcript_limit": "breakdown_transcript_limit",
     # 自动执行链：命中阀门的爆款自动转录 / 视频理解 / 拆解
     "auto_transcribe": "breakdown_auto_transcribe",
     "auto_understand": "breakdown_auto_understand",
@@ -68,6 +70,8 @@ _DEFAULTS: dict[str, tuple[object, str]] = {
     "breakdown_min_like": (0, "int"),
     "breakdown_min_engagement_rate": (0.0, "float"),
     "breakdown_publish_within_days": (0, "int"),
+    # 24k 字符约等于 20 分钟口播；再长就由用户在设置页按自己的模型上下文放宽。
+    "breakdown_transcript_limit": (24000, "int"),
     "breakdown_match_rule": ("any", "str"),
     "breakdown_auto_transcribe": (True, "bool"),
     "breakdown_auto_understand": (False, "bool"),

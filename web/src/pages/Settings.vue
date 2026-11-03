@@ -244,6 +244,10 @@
           </el-form-item>
           <el-form-item label="视频内联上限 video_max_mb">
             <el-input-number v-model="proc.video_max_mb" :min="0" :step="1" :precision="2" />
+            <span class="detail">
+              超过上限会先压到 720p/CRF30、再压到 480p/CRF34 才送入模型。压得越狠，
+              画面里的小字和 UI 细节越糊，视频理解的画面描述也越不可靠；模型支持大请求时建议调高。
+            </span>
           </el-form-item>
           <el-form-item label="封面内联上限 cover_max_mb">
             <el-input-number v-model="proc.cover_max_mb" :min="0" :step="1" :precision="2" />
@@ -311,6 +315,13 @@
               <el-radio-button value="any">任一命中</el-radio-button>
               <el-radio-button value="all">全部满足</el-radio-button>
             </el-radio-group>
+          </el-form-item>
+          <el-form-item label="转录字符上限 transcript_limit">
+            <el-input-number v-model="bd.transcript_limit" :min="1000" :max="200000" :step="2000" :precision="0" />
+            <span class="detail">
+              送入拆解的转录最多多少字符（默认 24000，约 20 分钟口播）。超出的部分会被截断，
+              并在提示词里明确告知模型「已截断」，避免它把缺失当成视频结尾。
+            </span>
           </el-form-item>
           <el-divider content-position="left">命中后自动执行</el-divider>
           <el-form-item label="自动转录">
@@ -882,7 +893,7 @@ const proc = reactive<any>({
 const bd = reactive<any>({
   prompt: '', viral_multiple: 3,
   min_play: 0, min_like: 0, min_engagement_rate: 0, publish_within_days: 0,
-  match_rule: 'any',
+  match_rule: 'any', transcript_limit: 24000,
   auto_transcribe: true, auto_understand: false, auto_breakdown: false,
 })
 
@@ -895,6 +906,7 @@ async function loadBreakdownSettings() {
   bd.min_engagement_rate = data.min_engagement_rate ?? 0
   bd.publish_within_days = data.publish_within_days ?? 0
   bd.match_rule = data.match_rule ?? 'any'
+  bd.transcript_limit = data.transcript_limit ?? 24000
   bd.auto_transcribe = data.auto_transcribe ?? true
   bd.auto_understand = data.auto_understand ?? false
   bd.auto_breakdown = data.auto_breakdown ?? false
@@ -912,6 +924,7 @@ async function saveBreakdownSettings() {
       min_engagement_rate: bd.min_engagement_rate,
       publish_within_days: bd.publish_within_days,
       match_rule: bd.match_rule,
+      transcript_limit: bd.transcript_limit,
       auto_transcribe: bd.auto_transcribe,
       auto_understand: bd.auto_understand,
       auto_breakdown: bd.auto_breakdown,

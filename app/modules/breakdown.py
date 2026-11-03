@@ -22,9 +22,13 @@ from typing import Callable
 
 from app.core.breakdown_settings import DEFAULT_BREAKDOWN_PROMPT
 
-# 转录送入拆解的最大字符数（与 analysis.py 的上限对齐，控制 token）。
-_TRANSCRIPT_LIMIT = 8000
+# 转录送入拆解的默认最大字符数。历史上写死 8000，一条 8 分钟的口播就吃满上限，
+# 结尾的转折和 CTA 直接丢失，但报告仍要填 ``structure`` / ``cta``。现在由
+# ``breakdown_transcript_limit`` 配置项控制（见 ``app/core/breakdown_settings.py``）。
+_TRANSCRIPT_LIMIT = 24000
 _COMMENT_LIMIT = 30
+# 视频理解自评低于该值时，提示词里要显式标注不确定性。
+_LOW_CONFIDENCE = 0.6
 
 # 去掉 ```json ... ``` / ``` ... ``` 代码围栏（与 vision.py 同款，保持容错一致）。
 _FENCE_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*|\s*```$")
@@ -75,12 +79,26 @@ def build_breakdown_prompt(payload: dict) -> tuple[str, str]:
     if isinstance(data_context, dict) and data_context:
         metric_lines.append(f"确定性上下文（后端算好，只引用不重算）：{_dump(data_context)}")
 
-    transcript = (payload.get("transcript") or "").strip()[:_TRANSCRIPT_LIMIT]
+    limit = payload.get("transcript_limit")
+    limit = int(limit) if isinstance(limit, int) and limit > 0 else _TRANSCRIPT_LIMIT
+    raw_transcript = (payload.get("transcript") or "").strip()
+    transcript = raw_transcript[:limit]
+    if len(raw_transcript) > limit:
+        # 显式告诉模型「被截断了」，否则它会把结尾的缺失当成「视频就此结束」，
+        # 仍然自信地给出 structure / cta。诚实的残缺好过编造的完整。
+        transcript += f"\n\n（转录在此处被截断：原文 {len(raw_transcript)} 字符，仅提供前 {limit} 字符）"
     comment_lines = [str(c) for c in (payload.get("comments") or []) if str(c).strip()][:_COMMENT_LIMIT]
 
     understanding = payload.get("understanding")
     if isinstance(understanding, dict) and understanding:
         understanding_text = _dump(understanding)
+        confidence = understanding.get("confidence")
+        if isinstance(confidence, (int, float)) and confidence < _LOW_CONFIDENCE:
+            # 低置信的画面描述不能和「确实看清了」等价对待，否则报告会把猜测写成事实。
+            understanding_text += (
+                f"\n（注意：视频理解模型自评置信度仅 {confidence:.2f}，"
+                "画面结论可能不准；引用画面时请标注不确定性，勿当作确凿证据。）"
+            )
     else:
         understanding_text = "（无视频理解结果，请仅依据转录与评论分析，不要臆测画面）"
 

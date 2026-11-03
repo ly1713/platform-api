@@ -33,9 +33,9 @@ from app.modules import breakdown
 
 logger = logging.getLogger("platform.breakdown")
 
-_PROMPT_VERSION = "v1"
-# 送入拆解的转录分段数（用于拆钩子/时间轴；全文另由 full_text 提供）。
-_SEGMENT_LIMIT = 20
+_PROMPT_VERSION = "v2"
+# 分段不再限条数：时间戳是拆解定位钩子/结构的依据，砍掉尾部等于让模型
+# 在「前半段有内容、后半段空白」的材料上写结论。预算由提示词层的字符上限统一控制。
 
 
 class BreakdownInputError(ValueError):
@@ -182,24 +182,38 @@ def _comment_lines(digest: list[dict]) -> list[str]:
     return lines
 
 
+def _format_ts(value: object) -> str:
+    """秒数 -> ``m:ss``；无法解析时原样返回，避免静默丢时间信息。"""
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return str(value)
+    if seconds != seconds or seconds < 0:  # NaN / 负数
+        return str(value)
+    total = int(round(seconds))
+    return f"{total // 60}:{total % 60:02d}"
+
+
 def _transcript_text(db: Session, asset_id: int) -> str:
-    """转录全文 + 前若干分段（拼成一段文本送入提示词）。"""
+    """转录正文，带时间戳。
+
+    之前是把 ``full_text`` 和前 20 个分段**同时**拼进提示词：同一段话出现两遍，
+    既浪费上下文，又让「找钩子台词/时间定位」这件事变成在两个版本里对齐。
+    现在只用分段时间戳版（模型定位更准），分段缺失时才退回 ``full_text``。
+    """
     tr = db.scalar(select(Transcript).where(Transcript.asset_id == asset_id))
     if tr is None:
         return ""
-    text = (tr.full_text or "").strip()
     segments = tr.segments if isinstance(tr.segments, list) else []
     seg_lines = []
-    for seg in segments[:_SEGMENT_LIMIT]:
+    for seg in segments:
         if not isinstance(seg, dict):
             continue
         body = str(seg.get("text", "")).strip()
         if not body:
             continue
-        seg_lines.append(f"[{seg.get('start', '')}-{seg.get('end', '')}] {body}")
-    if seg_lines:
-        text = (text + "\n" + "\n".join(seg_lines)).strip()
-    return text
+        seg_lines.append(f"[{_format_ts(seg.get('start'))}-{_format_ts(seg.get('end'))}] {body}")
+    return "\n".join(seg_lines) if seg_lines else (tr.full_text or "").strip()
 
 
 def _understanding(db: Session, asset_id: int) -> dict | None:
@@ -214,15 +228,21 @@ def _understanding(db: Session, asset_id: int) -> dict | None:
         "dimensions": row.dimensions or {},
         "timeline": row.timeline or [],
         "category": row.category or "",
+        # 让拆解区分「看清了」和「猜的」，低置信时报告应体现不确定性而不是照单全收。
+        "confidence": float(row.understanding_confidence or 0),
+        "low_confidence": bool(row.low_confidence),
     }
 
 
-def _assemble_payload(db: Session, content: ContentItem, asset: MediaAsset, prompt: str) -> dict:
+def _assemble_payload(
+    db: Session, content: ContentItem, asset: MediaAsset, prompt: str, *, transcript_limit: int = 0
+) -> dict:
     """把元数据 + 转录 + L3 + 评论 + 确定性数字拼成提示词 payload。"""
     data_context = _data_context(db, content, asset)
     understanding = _understanding(db, asset.id)
     return {
         "prompt": prompt,
+        "transcript_limit": transcript_limit or None,
         "platform": content.platform,
         "title": content.title,
         "author": content.author_name,
@@ -330,7 +350,13 @@ async def run_breakdown(
 
         s = get_breakdown_settings(db)
 
-        payload = _assemble_payload(db, content, asset, s["prompt"])
+        payload = _assemble_payload(
+            db,
+            content,
+            asset,
+            s["prompt"],
+            transcript_limit=int(s.get("transcript_limit") or 0),
+        )
         system, user = breakdown.build_breakdown_prompt(payload)
         from app.services.model_access_service import ModelAccessService
 

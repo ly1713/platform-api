@@ -24,10 +24,10 @@
     <section class="vision-strip" role="note">
       <span class="vision-mark" aria-hidden="true"><el-icon><View /></el-icon></span>
       <div class="vision-copy">
-        <strong>视频理解与爆款拆解必须使用多模态视觉模型</strong>
-        <span>系统会把视频逐镜头抽帧送入模型；纯文本模型看不到画面，只能凭标题或字幕猜测。整段视频理解还需要模型支持视频输入。</span>
+        <strong>视频理解需要能直接读视频的模型；爆款拆解只需要强文本模型</strong>
+        <span>系统把整段视频通过模型的视频输入接口送入，不做图片抽帧：抽帧只看到几张静帧，读不出节奏、镜头切换和画面里的文字，而拆解要的正是这些。爆款拆解本身不接触视频画面，它读的是转录和视频理解产出的结构化描述，所以可以单独分配一个文字能力更强的模型。</span>
       </div>
-      <span class="vision-note">推荐：Kimi K3、MiMo、Qwen3.8 Flash、Gemini 3.8 Flash</span>
+      <span class="vision-note">视频输入已验证：Qwen3.8 Flash、Gemini 3.8 Flash</span>
     </section>
 
     <div class="ui-tabs">
@@ -169,7 +169,7 @@
           </div>
           <div class="ui-panel-body assignment-body">
             <p v-if="item.work_type === 'video_understanding'" class="vision-hint">
-              仅可选择已通过视觉检测的模型。纯文本模型不会出现在下方列表。
+              仅列出通过「视频序列检测」的模型：要能按时间顺序读到画面变化，还要读出画面里的文字。只做低清抽帧或只能读图片的模型检测不通过。
             </p>
             <label>主模型</label>
             <el-select v-model="draft[item.work_type].primary_model_id" clearable placeholder="选择主模型" style="width: 100%">
@@ -182,7 +182,7 @@
             <p class="hint" v-if="item.work_type === 'video_understanding'">主模型失败时自动尝试备用模型；两个都必须具备视觉能力。</p>
             <p class="hint" v-else>主模型失败时自动尝试备用模型，失败原因会保留。</p>
             <p v-if="item.work_type === 'video_understanding' && !candidates(item.work_type).length" class="vision-empty">
-              暂无通过视觉检测的模型。请先在「已导入模型」中添加并检测一个支持图片/视频输入的模型。
+              暂无通过视频检测的模型。请先在「已导入模型」中添加模型并点「检测」；检测会用一段带文字的三色序列视频验证它是否真的按时间读视频。
             </p>
             <div v-if="item.legacy_pending_validation" class="legacy-assignment">
               <span class="ui-badge warn">旧配置待检测</span>
@@ -573,7 +573,7 @@ function runSetupAction(action: string) {
 }
 
 function workHint(type: string) {
-  if (type === 'text_analysis') return '读文字。分析速览（摘要 + 标签）与爆款拆解都走这里，深度拆解可选更强模型'
+  if (type === 'text_analysis') return '读文字，不需要看画面。分析速览（摘要 + 标签）与爆款拆解都走这里；拆解吃的是转录和视频理解的结论，所以值得分配一个更强的模型'
   if (type === 'cover_classify') return '读文字，也能看封面图，输出分类结果'
   return '真正看视频画面，结合转录输出结构化理解'
 }

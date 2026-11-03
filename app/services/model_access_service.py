@@ -182,12 +182,19 @@ def _redact_secrets(text: str, *, secret: str = "") -> str:
 
 
 def capabilities_of(model: AiModel, provider: AiProvider | None = None) -> dict:
-    """按 config_revision 与生效协议判定能力是否有效；stale/缺版本一律视为不可用。
+    """按 config_revision、生效协议与探针版本判定能力是否有效；stale/缺版本一律视为不可用。
 
     协议也是能力的前提：模型级协议被改动后，旧探测结论不再成立，必须重新检测。
     ``legacy`` 表示旧版 llm_* 配置已被认领但尚未实测：它可以让存量实例继续运行，
     但在供应商连接或协议变化后必须转为 stale，绝不能用旧结论静默继续调用。
+
+    探针版本同理：探针本身判定得更严（例如视频探针从「红蓝两色」升级到「三色顺序
+    + 画面文字」）时，同一个 ``probe_version`` 必须失效，否则旧模型的绿灯会一直
+    沿用下去，等于新探针白做。手工覆盖（``manual_override``）是用户的明确判断，
+    不受版本影响。
     """
+    from app.services.model_probe import _PROBE_VERSION
+
     if model is None or provider is None:
         return {}
     revision = int(provider.config_revision or 1)
@@ -203,15 +210,24 @@ def capabilities_of(model: AiModel, provider: AiProvider | None = None) -> dict:
         same_revision = int(item.get("config_revision") or 0) == revision
         # 旧记录可能没写 protocol：缺省视为与当前协议一致，避免升级即全量失效。
         same_protocol = str(item.get("protocol") or protocol) == protocol
-        if source not in trusted_sources or not (same_revision and same_protocol):
+        if source == "probe":
+            # 探测记录一直带 probe_version（v1 起就写），缺省只在老库/合成数据里出现，
+            # 按「与本版一致」处理，避免升级即全量失效；写了但不同，才算旧结论。
+            same_probe = str(item.get("probe_version") or _PROBE_VERSION) == _PROBE_VERSION
+        else:
+            same_probe = True
+        if source not in trusted_sources or not (same_revision and same_protocol and same_probe):
             item["value"] = False
             item["source"] = "stale" if source in trusted_sources else source
             if source in trusted_sources:
-                item["detail"] = (
-                    "模型协议已变更，需重新检测"
-                    if same_revision and not same_protocol
-                    else "供应商连接配置已变更，需重新检测"
-                )
+                if not same_probe:
+                    item["detail"] = "检测方法已升级，需重新检测"
+                else:
+                    item["detail"] = (
+                        "模型协议已变更，需重新检测"
+                        if same_revision and not same_protocol
+                        else "供应商连接配置已变更，需重新检测"
+                    )
         out[name] = item
     return out
 
