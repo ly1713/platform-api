@@ -199,9 +199,74 @@ def test_run_llm_strips_code_fence():
     assert out["data"]["verdict"] == "x"
 
 
-def test_run_llm_invalid_json_raises():
-    with pytest.raises(ValueError):
+def test_run_llm_invalid_json_raises_after_repair_also_fails():
+    """两轮都不是 JSON 才算失败；异常要带 invalid_json，便于审计归因。"""
+    with pytest.raises(b.BreakdownFormatError) as info:
         asyncio.run(b.run_llm("s", "u", call_model=_gateway("不是 JSON")))
+    # 仍然兼容既有的 ValueError 捕获语义（worker 据此不按网络错误重试）
+    assert isinstance(info.value, ValueError)
+    assert info.value.error_class == "invalid_json"
+
+
+def _repairing_gateway(first: str, second: str, calls: list):
+    """首轮返回非 JSON，修复轮返回 JSON —— 复刻 deepseek/MiniMax 的真实行为。"""
+
+    async def call_model(*, request, parse_result):
+        calls.append(request)
+        content = first if len(calls) == 1 else second
+        return _GatewayResult(parse_result(content), model="m")
+
+    return call_model
+
+
+def test_run_llm_repairs_non_json_reply_into_json():
+    """response_format 只是请求不是保证：模型输出 Markdown 时，把原文喂回去改写。
+
+    实测 deepseek-v4.1-flash 与 MiniMax-M3 会无视 response_format 直接输出
+    Markdown 报告；不修复的话整个拆解被判死，用户看到的是「调用失败」。
+    """
+    calls: list = []
+    gw = _repairing_gateway(
+        "## 结论\n这条视频标题与内容错配，评分 45。",
+        '{"verdict":"标题与内容错配","score":45}',
+        calls,
+    )
+    out = asyncio.run(b.run_llm("sys", "usr", call_model=gw))
+
+    assert out["data"]["verdict"] == "标题与内容错配"
+    assert len(calls) == 2
+    repair_messages = calls[1]["messages"]
+    # 修复轮必须带上模型自己的原始输出，否则它不知道要改哪段
+    assert repair_messages[2] == {"role": "assistant", "content": "## 结论\n这条视频标题与内容错配，评分 45。"}
+    assert "只输出 JSON" in repair_messages[3]["content"]
+    # 改写是换格式，不该再有创造性
+    assert calls[1]["temperature"] == 0
+
+
+def test_run_llm_repair_can_be_disabled():
+    """repair=False 时保持单轮语义（供成本敏感场景/排障使用）。"""
+    calls: list = []
+    gw = _repairing_gateway("不是 JSON", '{"ok":1}', calls)
+    with pytest.raises(ValueError):
+        asyncio.run(b.run_llm("s", "u", call_model=gw, repair=False))
+    assert len(calls) == 1
+
+
+def test_run_llm_network_error_is_not_masked_as_format_error():
+    """网络/鉴权失败没有原文可改，必须原样上抛，不能伪装成格式错误。"""
+
+    async def boom(*, request, parse_result):
+        raise ConnectionError("连接被重置")
+
+    with pytest.raises(ConnectionError):
+        asyncio.run(b.run_llm("s", "u", call_model=boom))
+
+
+def test_breakdown_format_error_classifies_as_invalid_json():
+    """调用审计要能区分「模型没按格式回」和「网络挂了」。"""
+    from app.modules import model_protocols
+
+    assert model_protocols.classify_error(b.BreakdownFormatError("x")) == "invalid_json"
 
 
 def test_run_llm_passes_timeout():
@@ -213,3 +278,53 @@ def test_run_llm_passes_timeout():
 def test_run_llm_requires_gateway():
     with pytest.raises(RuntimeError, match="ModelAccessService"):
         asyncio.run(b.run_llm("s", "u"))
+
+
+def test_run_llm_reports_repair_in_result():
+    """修复轮成功也要留痕：该模型「能干活但不守格式」，结果页不该显示一切正常。"""
+    calls: list = []
+    gw = _repairing_gateway("## 分析\n标题与内容错配。", '{"verdict":"x","score":1}', calls)
+    out = asyncio.run(b.run_llm("s", "u", call_model=gw))
+    repair = out["format_repair"]
+    assert repair["repaired"] is True
+    assert repair["first_round_chars"] == len("## 分析\n标题与内容错配。")
+    assert "标题与内容错配" in repair["first_round_head"]
+
+
+def test_run_llm_success_has_no_repair_marker():
+    out = asyncio.run(b.run_llm("s", "u", call_model=_gateway('{"verdict":"x","score":1}')))
+    assert "format_repair" not in out
+
+
+def test_run_llm_repair_keeps_real_model_and_usage():
+    """修复轮必须用自己那次调用的 model/usage/routing。
+
+    曾经只返回裸数据，导致落库时 routing 里留的是上一次运行的模型名
+    （实测：deepseek 跑出来的报告显示成 gpt-6-sol），排查会被彻底带偏。
+    """
+    calls: list = []
+
+    class _Result:
+        def __init__(self, data, model, usage):
+            self.data = data
+            self.used_model_key = model
+            self.usage = usage
+
+        def to_routing(self):
+            return {"used_model_key": self.used_model_key}
+
+    async def gw(*, request, parse_result):
+        calls.append(1)
+        if len(calls) == 1:
+            try:
+                parse_result("## 不是 JSON")
+            except ValueError as exc:
+                raise RuntimeError("解析失败") from exc
+        return _Result(parse_result('{"verdict":"x","score":1}'), "deepseek-v4.1-flash",
+                       {"total_tokens": 30})
+
+    out = asyncio.run(b.run_llm("s", "u", call_model=gw))
+    assert out["model"] == "deepseek-v4.1-flash"
+    assert out["routing"] == {"used_model_key": "deepseek-v4.1-flash"}
+    assert out["usage"] == {"total_tokens": 30}
+    assert out["format_repair"]["repaired"] is True

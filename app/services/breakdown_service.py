@@ -396,7 +396,12 @@ async def run_breakdown(
         row.prompt_version = _PROMPT_VERSION
         row.usage = result.get("usage") or {}
         if result.get("routing"):
-            row.routing = {"text_analysis": result["routing"]}
+            routing = dict(result["routing"])
+            # 首轮不是 JSON、靠修复轮救回来的，必须在结果里留痕：这个模型
+            # 「能干活但不守格式」，换一条素材仍可能失败，不该显示成一切正常。
+            if result.get("format_repair"):
+                routing["format_repair"] = result["format_repair"]
+            row.routing = {"text_analysis": routing}
         row.status = "done"
         row.error = ""
         events.publish("breakdown_status", {"asset_id": asset_id, "status": "done"}, db=db)

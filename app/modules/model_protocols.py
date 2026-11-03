@@ -462,6 +462,11 @@ def classify_error(exc: BaseException) -> str:
     """把异常映射为稳定的 error_class 枚举。"""
     if isinstance(exc, ModelProtocolError):
         return exc.error_class
+    # 调用方自定义的格式错误（如拆解的 BreakdownFormatError）自带 error_class，
+    # 不认它就会全部落成 unknown，审计里看不出「模型没按格式回」。
+    declared = getattr(exc, "error_class", "")
+    if isinstance(declared, str) and declared:
+        return declared
     if isinstance(exc, httpx.TimeoutException):
         return "timeout"
     if isinstance(exc, httpx.HTTPStatusError):

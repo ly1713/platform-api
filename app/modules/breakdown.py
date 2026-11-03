@@ -17,10 +17,13 @@
 """
 
 import json
+import logging
 import re
 from typing import Callable
 
 from app.core.breakdown_settings import DEFAULT_BREAKDOWN_PROMPT
+
+logger = logging.getLogger("platform.breakdown")
 
 # 转录送入拆解的默认最大字符数。历史上写死 8000，一条 8 分钟的口播就吃满上限，
 # 结尾的转折和 CTA 直接丢失，但报告仍要填 ``structure`` / ``cta``。现在由
@@ -32,6 +35,21 @@ _LOW_CONFIDENCE = 0.6
 
 # 去掉 ```json ... ``` / ``` ... ``` 代码围栏（与 vision.py 同款，保持容错一致）。
 _FENCE_RE = re.compile(r"^```[a-zA-Z0-9_-]*\s*|\s*```$")
+
+
+class BreakdownFormatError(ValueError):
+    """模型（含修复轮）仍未返回合法 JSON 对象。
+
+    继承 ``ValueError`` 保持既有调用方语义（worker 据此不按网络错误重试）。
+    ``error_class`` 供调用审计使用：这类失败以前落成 ``unknown``，按
+    error_class 排查时完全看不见「模型没按格式回」和「网络挂了」的区别。
+    """
+
+    error_class = "invalid_json"
+
+    def __init__(self, message: str, *, first_error: BaseException | None = None):
+        super().__init__(message)
+        self.first_error = first_error
 
 
 def _fmt(value: object, fallback: str = "（无）") -> str:
@@ -161,35 +179,190 @@ async def run_llm(
     user: str,
     *,
     call_model: Callable | None = None,
-    timeout: float = 90,
+    timeout: float = 300,
+    repair: bool = True,
 ) -> dict:
     """经统一模型网关执行拆解，返回 ``{"data", "usage", "model", "routing"}``。
 
     Args:
         system/user: `build_breakdown_prompt` 产出的提示词。
         call_model: 统一模型网关回调；未注入即视为编程错误。
-        timeout: 单次请求超时秒数（拆解为长文本，默认 90s）。
+        timeout: 单次请求超时秒数（拆解为长文本；带推理的模型实测需 80~240s）。
+        repair: 首次返回不是合法 JSON 时，是否原地让模型改写。
+            ``response_format`` 只是「请求」，不是「保证」：实测部分网关/模型
+            会直接无视它并输出 Markdown 报告（deepseek-v4.1-flash、MiniMax-M3
+            均如此），一次就把整个拆解判死。把模型自己的输出连同一份严格
+            schema 再喂回去，两者都能稳定产出合法 JSON。
 
     Raises:
-        ValueError: 返回内容不是合法 JSON 对象。
+        BreakdownFormatError: 首轮与修复轮都不是合法 JSON 对象。
     """
     if call_model is None:
         raise RuntimeError("爆款拆解必须经 ModelAccessService 调用，禁止直连模型接口")
-    body = {
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": 0.4,
-        "response_format": {"type": "json_object"},
-    }
+    if repair:
+        # 修复轮要看到首轮的原文才能改写，所以解析器只记录不抛错。
+        captured: dict[str, str] = {}
+
+        def _capture(text: str) -> dict:
+            captured["text"] = text
+            return parse_structured(text)
+
+        first_result = None
+        try:
+            result = await call_model(
+                request={
+                    "messages": [
+                        {"role": "system", "content": system},
+                        {"role": "user", "content": user},
+                    ],
+                    "temperature": 0.4,
+                    "response_format": {"type": "json_object"},
+                    "timeout": timeout,
+                },
+                parse_result=_capture,
+            )
+        except Exception as exc:  # noqa: BLE001 只为判断能否修复，其余原样上抛
+            # 网关把「解析失败」包成异常抛出，首轮的用量挂在异常上（若提供）。
+            first_result = getattr(exc, "result", None)
+            raw = captured.get("text") or ""
+            if not raw.strip():
+                raise
+            repaired = await _repair_json(
+                call_model, system, user, raw, timeout=timeout
+            )
+            if repaired is None:
+                raise BreakdownFormatError(
+                    f"模型两次都未返回合法 JSON：{_summarize_raw(raw)}",
+                    first_error=exc,
+                ) from exc
+            logger.warning("拆解首轮不是 JSON，修复轮成功（原文 %d 字符）", len(raw))
+            out = _as_result(repaired)
+            # 修复轮成功不代表首轮没出问题：路由信息里要留下痕迹，否则从结果页
+            # 看这个模型「一切正常」，下次换素材失败时又会从头查起。
+            out["format_repair"] = {
+                "repaired": True,
+                "first_round_chars": len(raw),
+                "first_round_head": _summarize_raw(raw, 80),
+            }
+            # 两轮都真的调了模型、都计费，用量必须相加；只记修复轮会少算一次。
+            out["usage"] = _merge_usage(_usage_of(first_result), out["usage"])
+            return out
+        return _as_result(result)
+
     result = await call_model(
-        request={**body, "timeout": timeout},
+        request={
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            "temperature": 0.4,
+            "response_format": {"type": "json_object"},
+            "timeout": timeout,
+        },
         parse_result=parse_structured,
     )
+    return _as_result(result)
+
+
+def _as_result(result) -> dict:
     return {
         "data": result.data if hasattr(result, "data") else result,
         "usage": getattr(result, "usage", {}) or {},
         "model": getattr(result, "used_model_key", ""),
         "routing": result.to_routing() if hasattr(result, "to_routing") else {},
     }
+
+
+def _usage_of(result) -> dict:
+    usage = getattr(result, "usage", None)
+    return usage if isinstance(usage, dict) else {}
+
+
+def _merge_usage(first: dict, second: dict) -> dict:
+    """两轮用量相加（两轮都真实调用了模型、都计费）。"""
+    out = dict(second or {})
+    for key, value in (first or {}).items():
+        if isinstance(value, (int, float)) and isinstance(out.get(key), (int, float)):
+            out[key] = out[key] + value
+        elif key not in out:
+            out[key] = value
+    return out
+
+
+def _summarize_raw(text: str, limit: int = 120) -> str:
+    """把模型原文压成一行摘要，供错误消息与日志定位。"""
+    flat = " ".join((text or "").split())
+    return flat[:limit] + ("…" if len(flat) > limit else "")
+
+
+_REPAIR_SCHEMA = json.dumps(
+    {
+        "verdict": "一句话结论：这条为什么火",
+        "score": 85,
+        "hook": {
+            "first_line": "前3秒台词",
+            "first_frame": "首帧画面",
+            "hook_type": "好奇缺口/反常识/清单体/转变叙事/痛点直呼/其他",
+            "why": "为什么抓人",
+        },
+        "structure": [{"segment": "0-3s", "role": "钩子", "summary": "段落概要"}],
+        "pacing": {
+            "pattern_interrupts": ["每3-5秒的变化"],
+            "re_engagement_points": [0],
+            "emotion_curve": "情绪曲线描述",
+        },
+        "script": {"reusable_phrases": ["可复用句式"], "money_lines": ["金句"]},
+        "psych_triggers": ["好奇"],
+        "cta": {"type": "引导方式", "placement": "位置"},
+        "comment_insights": {"top_themes": ["观众最关心"], "controversies": ["争议点"], "questions": ["可回复的问题"]},
+        "blueprint": ["复刻步骤"],
+        "replication_tips": ["给创作者的落地建议"],
+    },
+    ensure_ascii=False,
+    indent=1,
+)
+
+_REPAIR_INSTRUCTION = (
+    "你上一条回复不是合法 JSON，系统无法解析。\n"
+    "请把上一条回复里的分析结论改写成一个 JSON 对象。硬性要求：\n"
+    "1. 只输出 JSON 本身，不要解释、不要 Markdown、不要代码围栏；\n"
+    "2. **必须**使用下面结构里的英文键名，不要用中文键名，不要额外嵌套层级；\n"
+    "3. 上一条回复里没有的信息填 null 或空数组，不要临时编造。\n"
+    "目标结构：\n" + _REPAIR_SCHEMA
+)
+
+
+async def _repair_json(
+    call_model: Callable,
+    system: str,
+    user: str,
+    raw: str,
+    *,
+    timeout: float,
+) -> object | None:
+    """让模型把自己的非 JSON 输出改写成合法 JSON。
+
+    返回网关的完整结果对象（含 model/usage/routing），不是裸数据——
+    只返回数据会让修复成功的这条记录丢掉真实模型名，落库时保留上一次
+    运行的路由，排查时会被彻底带偏（实测：deepseek 跑的报告显示成 gpt-6-sol）。
+    仍失败返回 None。
+    """
+    try:
+        result = await call_model(
+            request={
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                    {"role": "assistant", "content": raw},
+                    {"role": "user", "content": _REPAIR_INSTRUCTION},
+                ],
+                # 改写是「照抄结论换格式」，不需要也不应该再有创造性。
+                "temperature": 0,
+                "response_format": {"type": "json_object"},
+                "timeout": timeout,
+            },
+            parse_result=parse_structured,
+        )
+    except Exception:  # noqa: BLE001 修复失败要保留首轮原文的错误摘要
+        return None
+    return result
