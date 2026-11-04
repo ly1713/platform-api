@@ -1,0 +1,92 @@
+### asset 54 dur=38.0 ev=words moments=2
+    moment {'start': 0.0, 'end': 30.0, 'score': 0.878, 'drivers': {'loud': 0.797, 'motion': 1.0}}
+    moment {'start': 30.0, 'end': 38.0, 'score': 0.6, 'drivers': {'loud': 1.0}}
+  [old#0] 7.3s qok=39.3% (ex9/fz2/mi17) t_oob=0 cov=100.0% seg=6 hm=0/0
+  [old#1] 7.4s qok=0.0% (ex0/fz0/mi0) t_oob=0 cov=100.0% seg=6 hm=0/0
+  [old#2] 7.6s qok=34.5% (ex8/fz2/mi19) t_oob=0 cov=100.0% seg=6 hm=0/0
+  [old_moments#0] 11.5s qok=38.5% (ex7/fz3/mi16) t_oob=0 cov=100.0% seg=6 hm=0/0
+  [old_moments#1] 6.0s qok=30.8% (ex6/fz2/mi18) t_oob=0 cov=100.0% seg=6 hm=0/0
+  [old_moments#2] 9.9s qok=34.5% (ex7/fz3/mi19) t_oob=0 cov=100.0% seg=6 hm=0/0
+  [new_nomoments#0] 10.5s qok=32.0% (ex10/fz6/mi34) t_oob=0 cov=100.0% seg=6 hm=3/5
+  [new_nomoments#1] 6.2s qok=45.9% (ex10/fz7/mi20) t_oob=0 cov=100.0% seg=6 hm=4/5
+  [new_nomoments#2] 7.5s qok=42.5% (ex12/fz5/mi23) t_oob=0 cov=100.0% seg=6 hm=5/6
+  [new#0] 7.7s qok=28.1% (ex7/fz2/mi23) t_oob=0 cov=100.0% seg=6 hm=6/6
+  [new#1] 8.8s qok=51.2% (ex16/fz6/mi21) t_oob=0 cov=100.0% seg=6 hm=5/5
+  [new#2] 10.0s qok=48.8% (ex14/fz6/mi21) t_oob=0 cov=100.0% seg=6 hm=5/6
+### asset 79 dur=48.0 ev=words moments=2
+    moment {'start': 30.0, 'end': 48.0, 'score': 1.137, 'drivers': {'cut': 1.0, 'motion': 1.0}}
+    moment {'start': 0.0, 'end': 30.0, 'score': 0.6, 'drivers': {'loud': 1.0}}
+  [old#0] 5.9s qok=15.8% (ex3/fz0/mi16) t_oob=0 cov=100.0% seg=7 hm=0/0
+  [old#1] 6.4s qok=16.7% (ex4/fz0/mi20) t_oob=0 cov=100.0% seg=7 hm=0/0
+  [old#2] 5.9s qok=21.4% (ex3/fz0/mi11) t_oob=0 cov=100.0% seg=7 hm=0/0
+  [old_moments#0] 9.8s qok=10.3% (ex2/fz1/mi26) t_oob=0 cov=100.0% seg=7 hm=0/0
+  [old_moments#1] 8.0s qok=0.0% (ex0/fz0/mi0) t_oob=0 cov=100.0% seg=7 hm=0/0
+  [old_moments#2] 5.3s qok=27.3% (ex4/fz2/mi16) t_oob=0 cov=100.0% seg=7 hm=0/0
+  [new_nomoments#0] 12.7s qok=37.5% (ex4/fz2/mi10) t_oob=0 cov=100.0% seg=7 hm=6/6
+  [new_nomoments#1] 10.1s qok=26.3% (ex9/fz1/mi28) t_oob=0 cov=100.0% seg=7 hm=0/0
+  [new_nomoments#2] 8.9s qok=0.0% (ex0/fz0/mi1) t_oob=0 cov=100.0% seg=7 hm=6/6
+  [new#0] 11.9s qok=20.0% (ex9/fz1/mi40) t_oob=0 cov=100.0% seg=7 hm=3/6
+  [new#1] 15.5s qok=42.1% (ex6/fz2/mi11) t_oob=0 cov=100.0% seg=7 hm=5/5
+  [new#2] 8.1s qok=0.0% (ex0/fz0/mi0) t_oob=0 cov=100.0% seg=7 hm=6/6
+### asset 53 dur=53.0 ev=words moments=2
+    moment {'start': 30.0, 'end': 53.0, 'score': 0.873, 'drivers': {'loud': 1.0, 'motion': 0.683}}
+    moment {'start': 0.0, 'end': 30.0, 'score': 0.654, 'drivers': {'motion': 1.0}}
+  [old#0] 4.9s qok=13.6% (ex3/fz0/mi19) t_oob=0 cov=100.0% seg=8 hm=0/0
+  [old#1] 5.4s qok=25.0% (ex3/fz1/mi12) t_oob=0 cov=100.0% seg=8 hm=0/0
+  [old#2] 6.9s qok=0.0% (ex0/fz0/mi1) t_oob=0 cov=100.0% seg=8 hm=0/0
+  [old_moments#0] 5.1s qok=18.8% (ex3/fz0/mi13) t_oob=0 cov=100.0% seg=8 hm=0/0
+  [old_moments#1] 7.7s qok=11.1% (ex3/fz0/mi24) t_oob=0 cov=100.0% seg=8 hm=0/0
+  [old_moments#2] 4.5s qok=18.8% (ex3/fz0/mi13) t_oob=0 cov=100.0% seg=7 hm=0/0
+  [new_nomoments#0] 8.5s qok=15.6% (ex5/fz0/mi27) t_oob=0 cov=100.0% seg=8 hm=3/5
+  [new_nomoments#1] 8.9s qok=17.6% (ex4/fz2/mi28) t_oob=0 cov=90.6% seg=8 hm=3/6
+  [new_nomoments#2] 8.1s qok=17.9% (ex5/fz0/mi23) t_oob=0 cov=100.0% seg=8 hm=2/6
+  [new#0] 14.6s qok=12.5% (ex1/fz1/mi14) t_oob=0 cov=100.0% seg=8 hm=6/6
+  [new#1] 14.0s qok=23.1% (ex3/fz0/mi10) t_oob=0 cov=100.0% seg=8 hm=4/4
+  [new#2] 6.4s qok=12.0% (ex3/fz0/mi22) t_oob=0 cov=100.0% seg=8 hm=3/6
+### asset 80 dur=45.0 ev=words moments=2
+    moment {'start': 0.0, 'end': 30.0, 'score': 1.0, 'drivers': {'loud': 1.0, 'motion': 1.0}}
+    moment {'start': 30.0, 'end': 45.0, 'score': 0.125, 'drivers': {}}
+  [old#0] 7.5s qok=12.0% (ex3/fz0/mi22) t_oob=0 cov=100.0% seg=5 hm=0/0
+  [old#1] 11.6s qok=12.5% (ex1/fz0/mi7) t_oob=0 cov=100.0% seg=6 hm=0/0
+  [old#2] 12.3s qok=7.1% (ex1/fz0/mi13) t_oob=0 cov=100.0% seg=4 hm=0/0
+  [old_moments#0] 10.9s qok=12.5% (ex1/fz0/mi7) t_oob=0 cov=100.0% seg=5 hm=0/0
+  [old_moments#1] 11.4s qok=16.7% (ex2/fz0/mi10) t_oob=0 cov=100.0% seg=5 hm=0/0
+  [old_moments#2] 14.7s qok=16.7% (ex1/fz0/mi5) t_oob=0 cov=0.0% seg=5 hm=0/0
+  [new_nomoments#0] 15.2s qok=44.0% (ex11/fz0/mi14) t_oob=0 cov=0.0% seg=5 hm=6/6
+  [new_nomoments#1] 11.6s qok=9.1% (ex2/fz0/mi20) t_oob=0 cov=0.0% seg=5 hm=7/7
+  [new_nomoments#2] 11.4s qok=21.7% (ex4/fz1/mi18) t_oob=0 cov=0.0% seg=4 hm=5/5
+  [new#0] 11.2s qok=8.0% (ex2/fz0/mi23) t_oob=0 cov=100.0% seg=6 hm=6/6
+  [new#1] 11.9s qok=14.3% (ex2/fz0/mi12) t_oob=0 cov=0.0% seg=5 hm=4/4
+  [new#2] 10.5s qok=7.7% (ex0/fz1/mi12) t_oob=0 cov=100.0% seg=5 hm=5/5
+### asset 81 dur=46.0 ev=words moments=2
+    moment {'start': 0.0, 'end': 30.0, 'score': 1.6, 'drivers': {'loud': 1.0, 'cut': 1.0, 'motion': 1.0}}
+    moment {'start': 30.0, 'end': 46.0, 'score': 0.39, 'drivers': {'loud': 0.649}}
+  [old#0] 11.9s qok=37.5% (ex3/fz0/mi5) t_oob=0 cov=0.0% seg=4 hm=0/0
+  [old#1] 6.5s qok=25.0% (ex2/fz1/mi9) t_oob=0 cov=100.0% seg=5 hm=0/0
+  [old#2] 11.6s qok=57.1% (ex12/fz0/mi9) t_oob=0 cov=0.0% seg=5 hm=0/0
+  [old_moments#0] 15.0s qok=18.8% (ex3/fz0/mi13) t_oob=0 cov=100.0% seg=2 hm=0/0
+  [old_moments#1] 15.8s qok=22.2% (ex2/fz0/mi7) t_oob=0 cov=0.0% seg=5 hm=0/0
+  [old_moments#2] 12.8s qok=30.0% (ex3/fz0/mi7) t_oob=0 cov=0.0% seg=4 hm=0/0
+  [new_nomoments#0] 12.0s qok=34.4% (ex7/fz4/mi21) t_oob=0 cov=100.0% seg=5 hm=5/5
+  [new_nomoments#1] 21.5s qok=57.9% (ex11/fz0/mi8) t_oob=0 cov=0.0% seg=5 hm=5/5
+  [new_nomoments#2] 12.3s qok=40.0% (ex4/fz0/mi6) t_oob=0 cov=0.0% seg=4 hm=5/5
+  [new#0] 15.9s qok=25.0% (ex2/fz0/mi6) t_oob=0 cov=0.0% seg=5 hm=5/5
+  [new#1] 14.5s qok=64.3% (ex9/fz0/mi5) t_oob=0 cov=0.0% seg=5 hm=5/5
+  [new#2] 6.9s qok=60.0% (ex9/fz3/mi8) t_oob=0 cov=100.0% seg=5 hm=4/5
+### asset 83 dur=75.0 ev=words moments=3
+    moment {'start': 60.0, 'end': 75.0, 'score': 1.45, 'drivers': {'loud': 0.75, 'cut': 1.0, 'motion': 1.0}}
+    moment {'start': 30.0, 'end': 60.0, 'score': 0.6, 'drivers': {'loud': 1.0}}
+    moment {'start': 0.0, 'end': 30.0, 'score': 0.152, 'drivers': {}}
+  [old#0] 10.9s qok=53.6% (ex15/fz0/mi13) t_oob=0 cov=100.0% seg=7 hm=0/0
+  [old#1] 15.4s qok=0.0% (ex0/fz0/mi0) t_oob=0 cov=0.0% seg=6 hm=0/0
+  [old#2] 24.9s qok=60.0% (ex12/fz0/mi8) t_oob=0 cov=0.0% seg=9 hm=0/0
+  [old_moments#0] 8.8s qok=50.0% (ex7/fz0/mi7) t_oob=0 cov=100.0% seg=6 hm=0/0
+  [old_moments#1] 15.4s qok=51.7% (ex15/fz0/mi14) t_oob=0 cov=100.0% seg=5 hm=0/0
+  [old_moments#2] 16.2s qok=57.1% (ex11/fz1/mi9) t_oob=0 cov=100.0% seg=6 hm=0/0
+  [new_nomoments#0] 16.6s qok=50.0% (ex6/fz0/mi6) t_oob=0 cov=0.0% seg=6 hm=5/5
+  [new_nomoments#1] 10.7s qok=55.6% (ex15/fz0/mi12) t_oob=0 cov=0.0% seg=7 hm=4/4
+  [new_nomoments#2] 8.3s qok=56.2% (ex17/fz1/mi14) t_oob=0 cov=100.0% seg=7 hm=4/5
+  [new#0] 7.4s qok=65.4% (ex16/fz1/mi9) t_oob=0 cov=100.0% seg=7 hm=5/5
+  [new#1] 11.3s qok=64.3% (ex17/fz1/mi10) t_oob=0 cov=100.0% seg=5 hm=5/5
+  [new#2] 4.4s qok=50.0% (ex6/fz2/mi8) t_oob=0 cov=100.0% seg=6 hm=4/4
+saved /tmp/ab/four_arm_30s.json
