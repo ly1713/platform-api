@@ -424,18 +424,14 @@ def test_run_understand_missing_content_raises_input_error(monkeypatch, session)
     assert a.understand_status == "error"
 
 
-def test_ensure_inline_second_pass_when_still_oversize(monkeypatch, session, tmp_path):
-    """Minor#2：压一次仍超限 → 再降一档（三档），产出 <= 上限。"""
-    src = tmp_path / "src.mp4"
-    src.write_bytes(b"\x00" * 1000)
+def _fake_ffmpeg(monkeypatch, svc, sizes, duration=30.0):
+    """替身 ffmpeg：按调用序号产出指定体积的"压缩结果"。"""
     calls = []
 
     def fake_run(args, capture_output=True, text=True):
-        calls.append(args[args.index("-vf") + 1])
-        out = args[-1]
-        # 第一次产出仍超限，第二次产出合规
-        size = 1000 if len(calls) == 1 else 10
-        with open(out, "wb") as fh:
+        calls.append(list(args))
+        size = sizes[min(len(calls) - 1, len(sizes) - 1)]
+        with open(args[-1], "wb") as fh:
             fh.write(b"\x00" * size)
 
         class _P:
@@ -444,14 +440,76 @@ def test_ensure_inline_second_pass_when_still_oversize(monkeypatch, session, tmp
 
         return _P()
 
+    monkeypatch.setattr(svc, "_ffprobe_duration", lambda _p: duration)
+    monkeypatch.setattr(svc, "_video_bitrate_kbps", lambda _p: 0)
     monkeypatch.setattr(svc.subprocess, "run", fake_run)
-    out, info = svc._ensure_inline(str(src), 0.0001, str(tmp_path / "_inline"))
+    return calls
+
+
+# 0.5MB 上限 + 30s 时长 → 约 126 kbps 总码率，高于 80kbps 的画质下限，
+# 能正常走「反算码率」分支（而不是被下限保护直接放弃）。
+_LIMIT_MB = 0.5
+_OVER = 600_000  # > 0.5MB
+
+
+def test_ensure_inline_second_pass_when_still_oversize(monkeypatch, session, tmp_path):
+    """压一次仍超限 → 再降一档分辨率（三档），产出 <= 上限。"""
+    src = tmp_path / "src.mp4"
+    src.write_bytes(b"\x00" * _OVER)
+    calls = _fake_ffmpeg(monkeypatch, svc, [_OVER, 10])
+
+    out, info = svc._ensure_inline(str(src), _LIMIT_MB, str(tmp_path / "_inline"))
 
     assert len(calls) == 2
-    assert os.path.getsize(out) <= 0.0001 * svc._MB
+    assert os.path.getsize(out) <= _LIMIT_MB * svc._MB
     assert info["compressed"] is True
     assert info["scale"] == 540  # 第二档短边
-    assert info["crf"] == "32"
+
+
+def test_ensure_inline_targets_bitrate_by_duration(monkeypatch, session, tmp_path):
+    """体积上限 + 时长 → 反算码率。
+
+    固定 CRF 是恒定质量，画面复杂时码率反而升高，18 分钟长视频永远压不进
+    15MB（CFG-28）。命中体积目标只能靠反算 `-b:v`。
+    """
+    src = tmp_path / "src.mp4"
+    src.write_bytes(b"\x00" * _OVER)
+    calls = _fake_ffmpeg(monkeypatch, svc, [10], duration=30.0)
+
+    svc._ensure_inline(str(src), _LIMIT_MB, str(tmp_path / "_inline"))
+
+    args = calls[0]
+    total_kbps = int(_LIMIT_MB * svc._MB * 0.9 * 8 / 30.0 / 1000)
+    audio_kbps = max(24, min(96, int(total_kbps * 0.25)))
+    video_kbps = max(48, total_kbps - audio_kbps)
+    assert args[args.index("-b:v") + 1] == f"{video_kbps}k"
+    assert args[args.index("-b:a") + 1] == f"{audio_kbps}k"
+    # 不再使用纯 CRF：CRF 无法钉住体积。
+    assert "-crf" not in args
+
+
+def test_ensure_inline_raises_video_too_large_when_floor_unreachable(monkeypatch, session, tmp_path):
+    """三档都压不下 → VideoTooLarge（不可重试），而不是让 vision 抛裸 ValueError。"""
+    src = tmp_path / "src.mp4"
+    src.write_bytes(b"\x00" * _OVER)
+    calls = _fake_ffmpeg(monkeypatch, svc, [_OVER])
+
+    with pytest.raises(svc.VideoTooLarge) as err:
+        svc._ensure_inline(str(src), _LIMIT_MB, str(tmp_path / "_inline"))
+    assert len(calls) == 3  # 720 / 540 / 480 都试过才放弃
+    assert "分块" in str(err.value)
+
+
+def test_ensure_inline_no_compression_under_limit(monkeypatch, session, tmp_path):
+    """未超限时原样返回，不跑 ffmpeg。"""
+    src = tmp_path / "src.mp4"
+    src.write_bytes(b"\x00" * 1000)
+    calls = _fake_ffmpeg(monkeypatch, svc, [10])
+
+    out, info = svc._ensure_inline(str(src), 15, str(tmp_path / "_inline"))
+    assert out == str(src)
+    assert info == {"compressed": False}
+    assert calls == []
 
 
 def test_ensure_inline_scales_by_short_side_for_portrait():
@@ -473,7 +531,7 @@ def test_ensure_inline_reports_compression_to_prompt(monkeypatch, session):
     """压缩信息必须进入理解提示词：模型不会自己知道小字已糊。"""
     prompt = svc.build_prompt(
         "other", "其他", "通用关注点", [], "转录内容",
-        compression={"compressed": True, "scale": 480, "crf": "34", "kbps": 210},
+        compression={"compressed": True, "scale": 480, "kbps": 210, "audio_kbps": 48},
     )
     assert "短边 480" in prompt
     assert "210 kbps" in prompt

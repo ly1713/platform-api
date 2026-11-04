@@ -654,3 +654,19 @@ def test_changing_model_protocol_marks_capabilities_stale(client, session):
     assert caps["text"]["value"] is False
     assert caps["text"]["source"] == "stale"
     assert "协议" in caps["text"]["detail"]
+
+
+def test_optional_prefilter_slot_does_not_block_ready(client, session):
+    """初筛是可选的省钱手段：没配它不算「配置未完成」。
+
+    如果把它算进必配槽位，用户一装好平台就会看到「分配不完整」的红色状态，
+    而这实际上只是没开一个默认关闭的可选功能。
+    """
+    from app.services.model_access_service import OPTIONAL_WORK_TYPES
+
+    assert OPTIONAL_WORK_TYPES == frozenset({"prefilter"})
+
+    state = client.get("/api/model-access/assignments").json()["setup_state"]
+    # 无论前面走到哪一步，prefilter 都不应出现在「必配但缺失」列表里
+    assert "prefilter" not in state["missing_work_types"]
+    assert "prefilter" not in state["assigned_work_types"]

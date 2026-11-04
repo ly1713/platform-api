@@ -19,16 +19,23 @@ from app.models import AiModel, AiProvider, ModelAssignment, ModelCallAttempt
 from app.modules import model_protocols
 
 
-WORK_TYPES = ("text_analysis", "cover_classify", "video_understanding")
+WORK_TYPES = ("text_analysis", "cover_classify", "video_understanding", "prefilter")
+# 可选槽位：不属于「开箱即用必须配齐」的三个核心工作。缺它不算配置未完成——
+# 初筛是省钱手段，用户没配就自动跳过，不能因此把整个设置页显示成红色。
+OPTIONAL_WORK_TYPES = frozenset({"prefilter"})
+REQUIRED_WORK_TYPES = tuple(w for w in WORK_TYPES if w not in OPTIONAL_WORK_TYPES)
 _WORK_TYPE_LABELS = {
     "text_analysis": "文字分析",
     "cover_classify": "封面判类",
     "video_understanding": "视频理解",
+    "prefilter": "初筛（本地小模型）",
 }
 _CAPABILITY_REQUIREMENTS = {
     "text_analysis": ("text", "json"),
     "cover_classify": ("text", "json"),
     "video_understanding": ("json", "video"),
+    # 初筛只读文本、只要 JSON，用小模型即可（本地 Ollama / llama.cpp 都行）。
+    "prefilter": ("text", "json"),
 }
 
 
@@ -327,11 +334,11 @@ def model_access_setup_state(db: Session) -> dict:
         and providers_by_id[row.provider_id].enabled
         and provider_credential_available(providers_by_id[row.provider_id])
     ]
-    assigned_work = [work for work in WORK_TYPES if assignment_configured(db, work)]
-    configured_work = [work for work in WORK_TYPES if _assignment_usable(db, work)]
-    missing_work = [work for work in WORK_TYPES if work not in configured_work]
+    assigned_work = [work for work in REQUIRED_WORK_TYPES if assignment_configured(db, work)]
+    configured_work = [work for work in REQUIRED_WORK_TYPES if _assignment_usable(db, work)]
+    missing_work = [work for work in REQUIRED_WORK_TYPES if work not in configured_work]
     unverified_work: list[str] = []
-    for work in WORK_TYPES:
+    for work in REQUIRED_WORK_TYPES:
         row = resolve_assignment(db, work)
         if row is None or not row.legacy_pending_validation:
             continue
@@ -354,7 +361,7 @@ def model_access_setup_state(db: Session) -> dict:
         stage, action, title = "no_models", "import_models", "导入并检测模型"
     elif not assigned_work:
         stage, action, title = "no_assignment", "assign_work", "分配工作模型"
-    elif not all(assignment_configured(db, work) for work in WORK_TYPES):
+    elif not all(assignment_configured(db, work) for work in REQUIRED_WORK_TYPES):
         stage, action, title = "assignment_incomplete", "assign_work", "补齐工作模型分配"
     elif missing_work:
         stage, action, title = "assignment_invalid", "assign_work", "修复不可用的工作分配"

@@ -29,7 +29,7 @@ from app.models import (
     VideoUnderstanding,
     ViralBreakdown,
 )
-from app.modules import breakdown
+from app.modules import breakdown, prefilter
 
 logger = logging.getLogger("platform.breakdown")
 
@@ -231,11 +231,91 @@ def _understanding(db: Session, asset_id: int) -> dict | None:
         # 让拆解区分「看清了」和「猜的」，低置信时报告应体现不确定性而不是照单全收。
         "confidence": float(row.understanding_confidence or 0),
         "low_confidence": bool(row.low_confidence),
+        # 证据类别：拆解要据此决定「从话里找爆点还是从画面/反应里找」。
+        "evidence_class": row.evidence_class or "",
+        # 分块理解时模型只看过局部，整体结论来自汇总，置信度需要打折看待。
+        "chunk_count": int(row.chunk_count or 1),
     }
 
 
+def _evidence_class(db: Session, asset_id: int) -> str:
+    """取本片的证据类别；无理解结果时按 words 兜底（最安全的默认）。"""
+    row = db.scalar(select(VideoUnderstanding).where(VideoUnderstanding.asset_id == asset_id))
+    return (row.evidence_class if row is not None else "") or "words"
+
+
+def _moments(db: Session, asset_id: int) -> list[dict]:
+    row = db.scalar(select(VideoUnderstanding).where(VideoUnderstanding.asset_id == asset_id))
+    data = row.moments if row is not None else None
+    return [m for m in data if isinstance(m, dict)] if isinstance(data, list) else []
+
+
+def _funnel_config(db: Session) -> dict:
+    """漏斗相关配置（存 process_settings，拆解这里只借用三个键）。"""
+    from app.core.process_settings import get_process_settings
+
+    s = get_process_settings(db)
+    return {
+        "prefilter_enabled": s.get("prefilter_enabled", False),
+        "prefilter_min_chars": s.get("prefilter_min_chars", 3000),
+        "prefilter_timeout_sec": s.get("prefilter_timeout_sec", 120),
+    }
+
+
+async def _funnel_transcript(db: Session, asset_id: int, s: dict, call_model) -> tuple[str, dict]:
+    """按开关跑两级漏斗，返回 ``(转录文本, 统计)``；未启用/失败一律回退全文。"""
+    if not s.get("prefilter_enabled", False):
+        return _transcript_text(db, asset_id), {"enabled": False}
+    tr = db.scalar(select(Transcript).where(Transcript.asset_id == asset_id))
+    if tr is None or not isinstance(tr.segments, list) or not tr.segments:
+        return _transcript_text(db, asset_id), {"enabled": False, "fallback_reason": "无分段"}
+
+    async def llm(system: str, body: str) -> str:
+        result = await call_model(
+            request={
+                "messages": [
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": body},
+                ],
+                "temperature": 0,
+                "response_format": {"type": "json_object"},
+                "timeout": float(s.get("prefilter_timeout_sec", 120) or 120),
+            },
+            parse_result=lambda raw: raw,
+        )
+        data = result.data
+        if isinstance(data, str):
+            return data
+        try:
+            return json.dumps(data, ensure_ascii=False)
+        except (TypeError, ValueError):
+            return str(data)
+
+    kept, stats = await prefilter.select_segments_async(
+        tr.segments,
+        llm=llm,
+        min_chars=int(s.get("prefilter_min_chars", 3000) or 3000),
+    )
+    text = "\n".join(
+        f"[{_format_ts(seg.get('start'))}-{_format_ts(seg.get('end'))}] {str(seg.get('text') or '').strip()}"
+        for seg in kept
+        if isinstance(seg, dict) and str(seg.get("text") or "").strip()
+    )
+    info = stats.as_dict()
+    if not text.strip():
+        return _transcript_text(db, asset_id), {**info, "fallback_reason": "初筛结果为空，回退全文"}
+    return text, info
+
+
 def _assemble_payload(
-    db: Session, content: ContentItem, asset: MediaAsset, prompt: str, *, transcript_limit: int = 0
+    db: Session,
+    content: ContentItem,
+    asset: MediaAsset,
+    prompt: str,
+    *,
+    transcript_limit: int = 0,
+    s_criteria: list | None = None,
+    transcript: str | None = None,
 ) -> dict:
     """把元数据 + 转录 + L3 + 评论 + 确定性数字拼成提示词 payload。"""
     data_context = _data_context(db, content, asset)
@@ -252,10 +332,13 @@ def _assemble_payload(
         "like": data_context["like"],
         "comment": data_context["comment"],
         "data_context": data_context,
-        "transcript": _transcript_text(db, asset.id),
+        "transcript": _transcript_text(db, asset.id) if transcript is None else transcript,
         "timeline": (understanding or {}).get("timeline", []),
         "understanding": understanding,
         "comments": _comment_lines(_comment_digest(db, content.id)),
+        "hook_criteria": s_criteria,
+        "evidence_class": _evidence_class(db, asset.id),
+        "moments": _moments(db, asset.id),
     }
 
 
@@ -287,6 +370,35 @@ def _sections(parsed: dict) -> dict:
         "blueprint": parsed.get("blueprint"),
         "replication_tips": parsed.get("replication_tips"),
     }
+
+
+def _hook_matches(parsed: dict) -> list[dict]:
+    """规整判据命中列表：只保留可核对的三元组，过滤模型自由发挥的字段。
+
+    每条至少要有 ``criterion`` 和 ``evidence``——只有 id 没有依据的命中
+    等于「模型说它命中了」，无法核对，不写进报告。
+    """
+    raw = parsed.get("hook_matches")
+    if not isinstance(raw, list):
+        return []
+    out: list[dict] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        criterion = item.get("criterion")
+        evidence = item.get("evidence")
+        if not isinstance(criterion, str) or not criterion.strip():
+            continue
+        if not isinstance(evidence, str) or not evidence.strip():
+            continue
+        entry = {"criterion": criterion.strip(), "evidence": evidence.strip()[:300]}
+        segment = item.get("segment")
+        if isinstance(segment, str) and segment.strip():
+            entry["segment"] = segment.strip()[:40]
+        out.append(entry)
+        if len(out) >= 12:
+            break
+    return out
 
 
 def _str_or_empty(value: object) -> str:
@@ -349,15 +461,9 @@ async def run_breakdown(
             )
 
         s = get_breakdown_settings(db)
+        # 漏斗配置与拆解配置分属两个 KV 模块，这里合并成一份视图。
+        s = {**s, **_funnel_config(db)}
 
-        payload = _assemble_payload(
-            db,
-            content,
-            asset,
-            s["prompt"],
-            transcript_limit=int(s.get("transcript_limit") or 0),
-        )
-        system, user = breakdown.build_breakdown_prompt(payload)
         from app.services.model_access_service import ModelAccessService
 
         gateway = ModelAccessService()
@@ -373,6 +479,37 @@ async def run_breakdown(
                 asset_id=asset_id,
                 job_id=job_id,
             )
+
+        async def call_prefilter(*, request, parse_result, **kwargs):
+            # 初筛走独立的 prefilter 槽位：它要的是便宜的小模型，与拆解用的
+            # 大模型是两回事。混用一个槽位会让「省钱」变成「多花一次大模型钱」。
+            return await gateway.call_with_fallback(
+                db,
+                work_type="prefilter",
+                operation="prefilter",
+                request=request,
+                parse_result=parse_result,
+                asset_id=asset_id,
+                job_id=job_id,
+            )
+
+        funnel: dict = {"enabled": False}
+        transcript_for_prompt = None
+        if s.get("prefilter_enabled", False):
+            transcript_for_prompt, funnel = await _funnel_transcript(
+                db, asset_id, s, call_prefilter
+            )
+
+        payload = _assemble_payload(
+            db,
+            content,
+            asset,
+            s["prompt"],
+            transcript_limit=int(s.get("transcript_limit") or 0),
+            s_criteria=s.get("hook_criteria"),
+            transcript=transcript_for_prompt,
+        )
+        system, user = breakdown.build_breakdown_prompt(payload)
 
         # 带推理的模型输出 2k 字符 JSON 实测 80~240 秒；写死 90 秒会把「正在思考」
         # 误判成失败，白跑一次主备切换还把结果记成 error。
@@ -390,6 +527,8 @@ async def run_breakdown(
         row.verdict = _str_or_empty(parsed.get("verdict"))
         row.sections = _sections(parsed)
         row.comment_insights = _dict_or_empty(parsed.get("comment_insights"))
+        # 判据命中是结构化结果：它回答「这条凭什么算爆点」，比自由文本的 verdict 更可核对。
+        row.sections["hook_matches"] = _hook_matches(parsed)
         row.data_context = payload["data_context"]
         row.understanding_available = payload["understanding"] is not None
         row.model = result.get("model") or ""
@@ -402,6 +541,10 @@ async def run_breakdown(
             if result.get("format_repair"):
                 routing["format_repair"] = result["format_repair"]
             row.routing = {"text_analysis": routing}
+        if funnel.get("enabled"):
+            # 漏斗是「送了多少给大模型」的证据：不解开它就说不清为什么报告
+            # 只覆盖了部分内容，也无法判断它到底省了多少。
+            row.routing = {**(row.routing or {}), "prefilter": funnel}
         row.status = "done"
         row.error = ""
         events.publish("breakdown_status", {"asset_id": asset_id, "status": "done"}, db=db)

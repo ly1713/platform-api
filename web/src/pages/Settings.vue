@@ -245,11 +245,69 @@
           <el-form-item label="视频内联上限 video_max_mb">
             <el-input-number v-model="proc.video_max_mb" :min="0" :step="1" :precision="2" />
             <span class="detail">
-              超过上限会按「短边」逐级压缩：720 → 540 → 480 像素（CRF 30/32/34）。
+              超过上限会按「短边」逐级压缩：720 → 540 → 480 像素，码率按时长反算以保证落在上限内。
               实测短边 ≥480 时画面文字仍可读，≤360 时 24px 小字基本读不出来；
               压得越狠，视频理解的画面描述越不可靠。模型支持大请求时建议调高。
             </span>
           </el-form-item>
+
+          <div class="proc-group">
+            <div class="proc-group-head">
+              <span class="proc-group-title">长视频分块理解</span>
+              <span class="proc-group-note">超长视频整片压不进上限，切成带重叠的块分别理解，再汇总成整体结论。</span>
+            </div>
+            <el-form-item label="分块阈值（秒） chunk_threshold_sec">
+              <el-input-number v-model="proc.chunk_threshold_sec" :min="0" :step="60" :precision="0" />
+              <span class="detail">
+                超过该时长就分块（默认 600 秒）。填 0 = 关闭分块，所有视频走单次请求。
+                18 分钟以上的视频不分块几乎必然压到不可用的画质。
+              </span>
+            </el-form-item>
+            <el-form-item label="单块时长（秒） chunk_seconds">
+              <el-input-number v-model="proc.chunk_seconds" :min="30" :step="30" :precision="0" />
+              <span class="detail">每块的目标长度（默认 300 秒）。块越多越贵，块越小单块画质越好。</span>
+            </el-form-item>
+            <el-form-item label="块间重叠（秒） chunk_overlap_sec">
+              <el-input-number v-model="proc.chunk_overlap_sec" :min="0" :step="5" :precision="0" />
+              <span class="detail">相邻块重复的秒数（默认 15），给跨块的句子留上下文；重叠区的事件合并时自动去重。</span>
+            </el-form-item>
+          </div>
+
+          <div class="proc-group">
+            <div class="proc-group-head">
+              <span class="proc-group-title">视听信号</span>
+              <span class="proc-group-note">ffmpeg 本地测量响度 / 镜头切换 / 运动量，给「高能区在哪」提供客观依据。</span>
+            </div>
+            <el-form-item label="采集视听信号 signals_enabled">
+              <el-switch v-model="proc.signals_enabled" />
+              <span class="detail">
+                纯本地解码，不产生模型费用。开启后每片会多花几十秒到几分钟（取决于时长），
+                换来的是：不懂台词的跳舞/游戏/萌宠类素材也有可定位的重点时段。
+              </span>
+            </el-form-item>
+          </div>
+
+          <div class="proc-group">
+            <div class="proc-group-head">
+              <span class="proc-group-title">两级漏斗（省钱）</span>
+              <span class="proc-group-note">先让便宜的小模型圈出可能有爆点的区间，云端大模型只精读入围部分。</span>
+            </div>
+            <el-form-item label="启用两级漏斗 prefilter_enabled">
+              <el-switch v-model="proc.prefilter_enabled" />
+              <span class="detail">
+                默认关闭。需要先在「模型接入 → 工作分配」给「初筛」槽位配一个便宜模型
+                （本地 Ollama / llama.cpp 都行）。任何失败都会自动回退全文，不会让任务失败。
+              </span>
+            </el-form-item>
+            <el-form-item label="启用阈值（字符） prefilter_min_chars">
+              <el-input-number v-model="proc.prefilter_min_chars" :min="0" :step="500" :precision="0" />
+              <span class="detail">转录短于该长度直接送云端，初筛的固定开销不划算。</span>
+            </el-form-item>
+            <el-form-item label="初筛超时（秒） prefilter_timeout_sec">
+              <el-input-number v-model="proc.prefilter_timeout_sec" :min="1" :step="10" :precision="0" />
+              <span class="detail">超时即回退全文；本地小模型冷启动通常要十几秒。</span>
+            </el-form-item>
+          </div>
           <el-form-item label="封面内联上限 cover_max_mb">
             <el-input-number v-model="proc.cover_max_mb" :min="0" :step="1" :precision="2" />
           </el-form-item>
@@ -343,6 +401,35 @@
             <el-switch v-model="bd.auto_breakdown" />
             <span class="detail">命中阀门后自动出拆解报告（消耗 LLM 额度）</span>
           </el-form-item>
+          <el-divider content-position="left">爆点判据（按影响力排序）</el-divider>
+          <p class="tip" style="margin-bottom: 10px">
+            模型按这张表逐条对照找爆点，并在报告里回报命中了哪几条、在哪一段、依据是什么。
+            顺序即优先级：越靠前越被当作爆点主因。
+          </p>
+          <div class="criteria-list">
+            <div v-for="(c, idx) in hookCriteria" :key="idx" class="criteria-row">
+              <span class="criteria-rank">{{ idx + 1 }}</span>
+              <div class="criteria-fields">
+                <div class="criteria-top">
+                  <el-input v-model="c.name" placeholder="判据名称（如 钩子时刻）" class="criteria-name" />
+                  <el-input v-model="c.id" placeholder="id（英文，报告里引用它）" class="criteria-id" />
+                </div>
+                <el-input v-model="c.ask" placeholder="判定说明：什么样算命中" />
+              </div>
+              <div class="criteria-acts">
+                <button class="ui-btn sm ghost" type="button" :disabled="idx === 0" @click="moveCriterion(idx, -1)">上移</button>
+                <button class="ui-btn sm ghost" type="button" :disabled="idx === hookCriteria.length - 1" @click="moveCriterion(idx, 1)">下移</button>
+                <button class="ui-btn sm ghost danger" type="button" :disabled="hookCriteria.length <= 1" @click="removeCriterion(idx)">删除</button>
+              </div>
+            </div>
+            <p v-if="!hookCriteria.length" class="criteria-empty">至少保留一条判据。</p>
+          </div>
+          <div class="ui-bar" style="margin: 10px 0 18px">
+            <button class="ui-btn sm" type="button" @click="addCriterion">+ 新增判据</button>
+            <button class="ui-btn sm ghost" type="button" @click="resetCriteria">恢复默认 8 条</button>
+            <span class="detail">判据 id 必须唯一；改 id 会让历史报告里的 hook_matches 对不上，尽量只改名称与说明。</span>
+          </div>
+
           <el-divider content-position="left">拆解报告提示词</el-divider>
           <el-form-item label="拆解提示词">
             <el-input v-model="bd.prompt" type="textarea" :rows="12" />
@@ -889,6 +976,13 @@ const proc = reactive<any>({
   weight_play: 0,
   video_max_mb: 15,
   cover_max_mb: 5,
+  chunk_threshold_sec: 600,
+  chunk_seconds: 300,
+  chunk_overlap_sec: 15,
+  signals_enabled: true,
+  prefilter_enabled: false,
+  prefilter_min_chars: 3000,
+  prefilter_timeout_sec: 120,
   low_confidence_threshold: 0.6,
   classify_enabled: true,
   use_cover: false,
@@ -903,7 +997,44 @@ const bd = reactive<any>({
   min_play: 0, min_like: 0, min_engagement_rate: 0, publish_within_days: 0,
   match_rule: 'any', transcript_limit: 24000, timeout_sec: 300,
   auto_transcribe: true, auto_understand: false, auto_breakdown: false,
+  hook_criteria: [] as HookCriterion[],
 })
+
+// v-for 直接遍历 reactive<any> 的字段时，索引会被推导成 string | number，
+// 而排序/删除都要求 number。用带类型的 computed 收口。
+const hookCriteria = computed<HookCriterion[]>(() => bd.hook_criteria as HookCriterion[])
+
+// 内置 8 条与后端 app/core/hook_criteria.py:DEFAULT_HOOK_CRITERIA 保持一致。
+// 只在「用户点恢复默认」和首次加载失败时用；正常路径永远读后端返回值。
+interface HookCriterion { id: string; name: string; ask: string }
+
+const DEFAULT_HOOK_CRITERIA: HookCriterion[] = [
+  { id: 'hook', name: '钩子时刻', ask: '开头就制造好奇或反差的语句，让人立刻想知道后面讲什么' },
+  { id: 'emotion_peak', name: '情绪峰值', ask: '真实的惊讶、大笑、愤怒、脆弱或兴奋，未经修饰的反应' },
+  { id: 'opinion_bomb', name: '观点炸弹', ask: '强烈、有争议或反直觉的判断，让人想赞同或反驳' },
+  { id: 'revelation', name: '反转/揭秘', ask: '出人意料的事实、数据或自白，改变观众原本的认知' },
+  { id: 'conflict', name: '冲突/张力', ask: '分歧、反驳，或一个被正面处理的问题' },
+  { id: 'quotable', name: '可摘金句', ask: '单独拿出来就能当引语卡的一句话' },
+  { id: 'story_peak', name: '故事高潮', ask: '一段叙事的转折点或报酬时刻' },
+  { id: 'practical', name: '实用价值', ask: '观众能立刻上手的具体技巧、方法或洞察' },
+]
+
+function addCriterion() {
+  bd.hook_criteria.push({ id: `criterion_${bd.hook_criteria.length + 1}`, name: '', ask: '' })
+}
+function removeCriterion(idx: number) {
+  if (bd.hook_criteria.length <= 1) return
+  bd.hook_criteria.splice(idx, 1)
+}
+function moveCriterion(idx: number, delta: number) {
+  const next = idx + delta
+  if (next < 0 || next >= bd.hook_criteria.length) return
+  const [item] = bd.hook_criteria.splice(idx, 1)
+  bd.hook_criteria.splice(next, 0, item)
+}
+function resetCriteria() {
+  bd.hook_criteria = DEFAULT_HOOK_CRITERIA.map((c) => ({ ...c }))
+}
 
 async function loadBreakdownSettings() {
   const data = await apiCall('get_breakdown_settings_api_api_system_breakdown_settings_get')
@@ -919,11 +1050,28 @@ async function loadBreakdownSettings() {
   bd.auto_transcribe = data.auto_transcribe ?? true
   bd.auto_understand = data.auto_understand ?? false
   bd.auto_breakdown = data.auto_breakdown ?? false
+  bd.hook_criteria = Array.isArray(data.hook_criteria) && data.hook_criteria.length
+    ? data.hook_criteria.map((c: any) => ({ id: c.id ?? '', name: c.name ?? '', ask: c.ask ?? '' }))
+    : DEFAULT_HOOK_CRITERIA.map((c) => ({ ...c }))
+}
+
+function validateCriteria(): string {
+  if (!hookCriteria.value.length) return '至少保留一条爆点判据'
+  const seen = new Set<string>()
+  for (const [i, c] of hookCriteria.value.entries()) {
+    if (!c.id.trim() || !c.name.trim() || !c.ask.trim()) return `第 ${i + 1} 条判据的 id / 名称 / 说明都不能为空`
+    if (!/^[A-Za-z0-9_-]+$/.test(c.id.trim())) return `第 ${i + 1} 条判据的 id 只能用英文、数字、下划线或短横线`
+    if (seen.has(c.id.trim())) return `判据 id「${c.id}」重复了，每条必须唯一`
+    seen.add(c.id.trim())
+  }
+  return ''
 }
 
 async function saveBreakdownSettings() {
   if (!bd.prompt || !bd.prompt.trim()) return ElMessage.warning('提示词不能为空')
   if (!(bd.viral_multiple > 0)) return ElMessage.warning('爆款倍数必须为正数')
+  const criteriaError = validateCriteria()
+  if (criteriaError) return ElMessage.warning(criteriaError)
   try {
     await apiCall('update_breakdown_settings_api_api_system_breakdown_settings_put', {}, { body: {
       prompt: bd.prompt,
@@ -938,6 +1086,9 @@ async function saveBreakdownSettings() {
       auto_transcribe: bd.auto_transcribe,
       auto_understand: bd.auto_understand,
       auto_breakdown: bd.auto_breakdown,
+      hook_criteria: (bd.hook_criteria as HookCriterion[]).map((c: HookCriterion) => ({
+        id: c.id.trim(), name: c.name.trim(), ask: c.ask.trim(),
+      })),
     } })
     ElMessage.success('已保存')
     await loadBreakdownSettings()
@@ -1199,6 +1350,13 @@ async function saveProcessSettings() {
     weight_play: proc.weight_play,
     video_max_mb: proc.video_max_mb,
     cover_max_mb: proc.cover_max_mb,
+    chunk_threshold_sec: proc.chunk_threshold_sec,
+    chunk_seconds: proc.chunk_seconds,
+    chunk_overlap_sec: proc.chunk_overlap_sec,
+    signals_enabled: proc.signals_enabled,
+    prefilter_enabled: proc.prefilter_enabled,
+    prefilter_min_chars: proc.prefilter_min_chars,
+    prefilter_timeout_sec: proc.prefilter_timeout_sec,
     low_confidence_threshold: proc.low_confidence_threshold,
     classify_enabled: proc.classify_enabled,
     use_cover: proc.use_cover,
@@ -1319,8 +1477,45 @@ onUnmounted(stopPolling)
 .ai-window-note { margin: 12px 0 14px; }
 .ai-window-empty { padding: 24px 12px; border: 1px dashed var(--line); }
 
+/* 视频理解里的分组块：硬边 + 顶栏标签，不用卡片堆叠 */
+.proc-group {
+  margin: 20px 0 4px;
+  border: 1px solid var(--line);
+  background: var(--surface-2);
+  padding: 0 14px 6px;
+}
+.proc-group-head {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  margin: 0 -14px 8px; padding: 8px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-3);
+}
+.proc-group-title { font-weight: 700; font-size: var(--fs-md); color: var(--ink); }
+.proc-group-note { color: var(--muted); font-size: var(--fs-sm); }
+.proc-group :deep(.el-form-item:last-child) { margin-bottom: 8px; }
+
+/* 爆点判据编辑器：序号 + 名称/id + 说明 + 排序，不用卡片 */
+.criteria-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 4px; }
+.criteria-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 12px; border: 1px solid var(--line-soft); background: var(--surface-2);
+}
+.criteria-rank {
+  flex: none; width: 22px; height: 22px; display: grid; place-items: center;
+  border: 1px solid var(--ink); background: var(--surface);
+  font-size: var(--fs-xs); font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.criteria-fields { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.criteria-top { display: flex; gap: 6px; flex-wrap: wrap; }
+.criteria-name { flex: 1 1 190px; }
+.criteria-id { flex: 1 1 150px; }
+.criteria-acts { flex: none; display: flex; gap: 4px; flex-wrap: wrap; }
+.criteria-empty { color: var(--muted); font-size: var(--fs-sm); margin: 6px 0; }
+
 @media (max-width: 720px) {
   .ai-window-row { align-items: flex-start; }
   .ai-window-days { flex-wrap: wrap; }
+  .criteria-row { flex-wrap: wrap; }
+  .criteria-acts { margin-left: auto; }
 }
 </style>

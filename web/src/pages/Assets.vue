@@ -360,6 +360,12 @@
             <el-tag size="small" type="success">{{ taxonomy[understanding.category] || understanding.category }}</el-tag>
             <span class="c-meta">置信度 {{ (understanding.category_confidence * 100).toFixed(0) }}%</span>
             <el-tag v-if="understanding.low_confidence" size="small" type="warning">低置信度</el-tag>
+            <span v-if="understanding.evidence_class" class="ev-pill" :class="`ev-${understanding.evidence_class}`">
+              {{ EVIDENCE_LABELS[understanding.evidence_class] || '靠话' }}
+            </span>
+            <span v-if="(understanding.chunk_count || 1) > 1" class="c-meta">
+              分 {{ understanding.chunk_count }} 块理解后汇总
+            </span>
           </p>
           <p class="c-meta">{{ understanding.category_reason }}</p>
           <p v-if="understanding.summary"><b>概述：</b>{{ understanding.summary }}</p>
@@ -369,6 +375,56 @@
               <span class="dim-v">{{ fmtVal(v) }}</span>
             </div>
           </div>
+          <!-- 候选片段：信号驱动的选段结果，带入选依据 -->
+          <div v-if="understanding.moments?.length" class="moment-block">
+            <div class="moment-head">
+              <b>候选片段</b>
+              <span class="c-meta">ffmpeg 测得的响度 / 镜头切换 / 运动量融合而成，非模型推测</span>
+            </div>
+            <div class="moment-list">
+              <div v-for="(m, i) in understanding.moments" :key="i" class="moment-row">
+                <span class="moment-time">{{ fmtSec(m.start) }}–{{ fmtSec(m.end) }}</span>
+                <span class="moment-bar">
+                  <span class="moment-bar-fill" :style="{ width: momentBarWidth(m.score) }" />
+                </span>
+                <span class="moment-score">{{ (m.score ?? 0).toFixed(2) }}</span>
+                <span class="moment-drivers">
+                  <span v-for="(v, k) in (m.drivers || {})" :key="k" class="driver" :title="`${driverLabel(k)}：${v}`">
+                    {{ driverLabel(k) }}
+                  </span>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <!-- 通篇视听信号：整片响度曲线，用来判断节奏与高能区分布 -->
+          <div v-if="understanding.signals?.loudness_curve?.length" class="signal-block">
+            <div class="moment-head">
+              <b>通篇视听信号</b>
+              <span class="c-meta">{{ fmtSec(understanding.signals.duration) }} · 镜头切换 {{ understanding.signals.cut_times?.length || 0 }} 次</span>
+            </div>
+            <div class="signal-strip" role="img" :aria-label="`响度曲线，共 ${signalCells.length} 格，每格取若干秒的峰值`">
+              <span
+                v-for="(cell, i) in signalCells"
+                :key="i"
+                class="signal-cell"
+                :style="{ height: cell.height, background: cell.color }"
+                :title="`${fmtSec(cell.t)} · 响度 ${cell.value} dB`"
+              />
+            </div>
+            <div class="signal-legend">
+              <span class="c-meta">响度</span>
+              <span class="legend-swatch" style="background: color-mix(in oklab, var(--accent) 12%, var(--surface-2))" />低
+              <span class="legend-swatch" style="background: color-mix(in oklab, var(--accent) 55%, var(--surface-2))" />中
+              <span class="legend-swatch" style="background: var(--accent)" />高
+              <span class="grow" />
+              <span class="c-meta">{{ signalCells.length }} 格 · 每格取峰值</span>
+            </div>
+            <p v-if="understanding.signals.errors?.length" class="c-meta">
+              部分信号未采到（{{ understanding.signals.errors.join('；') }}），其余仍可用。
+            </p>
+          </div>
+
           <p v-if="understanding.timeline?.length" class="c-meta">
             时间线：<template v-for="(e, i) in understanding.timeline" :key="i">{{ e.t }}s {{ e.event }}<template v-if="i < understanding.timeline.length - 1"> · </template></template>
           </p>
@@ -428,6 +484,18 @@
                 模型 {{ breakdown.model || '—' }} · 提示词 {{ breakdown.prompt_version || '—' }}
                 <el-tag v-if="breakdown.understanding_available === false" size="small" type="warning">无视频理解（降级报告）</el-tag>
               </p>
+            </div>
+          </div>
+
+          <!-- 判据命中：回答「这条凭什么算爆点」，每条都要能指回具体依据 -->
+          <div v-if="breakdown.sections?.hook_matches?.length" class="bd-block">
+            <h4>命中的爆点判据</h4>
+            <div class="hm-list">
+              <div v-for="(h, i) in breakdown.sections.hook_matches" :key="i" class="hm-row">
+                <span class="hm-name">{{ criterionName(h.criterion) }}</span>
+                <span v-if="h.segment" class="hm-seg">{{ h.segment }}</span>
+                <span class="hm-evidence">{{ h.evidence }}</span>
+              </div>
             </div>
           </div>
 
@@ -833,6 +901,19 @@ const hasCommentInsights = computed(() => {
   return ['top_themes', 'controversies', 'questions'].some((k) => ci[k]?.length)
 })
 
+async function loadHookCriteria() {
+  try {
+    const data = await apiCall('get_breakdown_settings_api_api_system_breakdown_settings_get')
+    const map: Record<string, string> = {}
+    for (const c of data.hook_criteria || []) {
+      if (c && typeof c.id === 'string') map[c.id] = String(c.name || c.id)
+    }
+    hookCriteria.value = map
+  } catch {
+    // 判据名只是展示装饰，取不到就把 id 原样显示，不阻断报告
+  }
+}
+
 async function loadBreakdown(assetId: number) {
   const data = await apiCall('get_breakdown_api_assets__asset_id__breakdown_get', { asset_id: assetId })
   const breakdownStep = data.pipeline?.steps?.find((row: any) => row.step === 'breakdown')
@@ -954,6 +1035,85 @@ function fmtTime(v: string | null) {
   return formatDateTime(v, '')
 }
 
+// ---- 视频理解：证据类别 / 候选片段 / 视听信号 ----
+// 与后端 app/core/evidence_class.py 的 EVIDENCE_LABELS 保持一致。
+const EVIDENCE_LABELS: Record<string, string> = {
+  words: '靠话（转录足以判断）',
+  reaction: '靠现场反应',
+  visual: '靠画面',
+}
+// 信号来源：融合时哪一路贡献最大。
+const DRIVER_LABELS: Record<string, string> = {
+  loud: '响度',
+  cut: '切镜',
+  motion: '运动',
+}
+
+// 判据 id -> 中文名。拆解报告只存 id（改了名称也还能对上），展示时再翻译。
+const hookCriteria = ref<Record<string, string>>({})
+/** 判据名；报告里的 id 已不在当前判据表里时原样显示 id，便于发现配置漂移。 */
+function criterionName(id: string) {
+  return hookCriteria.value[id] || id
+}
+
+/** 信号来源的中文名；未知来源原样显示（不隐藏后端口径变化）。 */
+function driverLabel(key: string | number) {
+  return DRIVER_LABELS[String(key)] || String(key)
+}
+
+/** 秒数 → m:ss；非法输入原样返回，避免把坏数据渲染成 0:00。 */
+function fmtSec(v: any) {
+  const num = Number(v)
+  if (!Number.isFinite(num) || num < 0) return '—'
+  const total = Math.round(num)
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`
+}
+
+// 候选片段的强度条：按本片最高分归一，避免固定阈值在不同素材上失真。
+function momentBarWidth(score: any) {
+  const list = (understanding.value?.moments || []).map((m: any) => Number(m?.score) || 0)
+  const max = Math.max(1e-6, ...list)
+  const pct = Math.max(0, Math.min(1, (Number(score) || 0) / max))
+  return `${(pct * 100).toFixed(1)}%`
+}
+
+// 响度曲线降采样成固定宽度的格子。
+// 一条 18 分钟的视频每秒一个点 = 1080 个 span，直接渲染既卡又没信息量
+// （屏幕上也放不下 1080 个可辨别的格子）。按桶取均值压到 ~120 格。
+const SIGNAL_BUCKETS = 120
+const signalCells = computed(() => {
+  const raw = understanding.value?.signals?.loudness_curve
+  const nums = Array.isArray(raw) ? raw.map((x: any) => Number(x) || 0) : []
+  if (!nums.length) return []
+  const duration = Number(understanding.value?.signals?.duration) || nums.length
+  const size = Math.max(1, Math.ceil(nums.length / SIGNAL_BUCKETS))
+  // 响度是负 dB，且同一片素材的动态范围往往只有 8~10dB（口播 -14 ~ -6）。
+  // 用「0 到最大值」做分母会让整条带子糊成一片纯色；
+  // 改按本片的分位区间映射，才看得见「哪里比周围更响」。
+  const buckets: { peak: number; t: number }[] = []
+  for (let i = 0; i < nums.length; i += size) {
+    const slice = nums.slice(i, i + size)
+    // 用峰值而不是均值：均值会把一声短促的爆发稀释掉，而那正是要找的东西。
+    const peak = slice.reduce((a, b) => (b > a ? b : a), -Infinity)
+    buckets.push({ peak, t: (i / nums.length) * duration })
+  }
+  const sorted = buckets.map((b) => b.peak).sort((a, b) => a - b)
+  const at = (q: number) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))] ?? -70
+  const lo = at(0.05)
+  const hi = at(0.97)
+  const span = Math.max(1, hi - lo)
+  return buckets.map((b) => {
+    const ratio = Math.max(0, Math.min(1, (b.peak - lo) / span))
+    return {
+      // 高度是主要编码（色差在窄动态范围下不可靠），颜色辅助强调强峰。
+      height: `${Math.round(18 + ratio * 82)}%`,
+      color: `color-mix(in oklab, var(--accent) ${Math.round(25 + ratio * 75)}%, var(--surface-3))`,
+      t: b.t,
+      value: Math.round(b.peak),
+    }
+  })
+})
+
 async function load(silent = false) {
   // silent：keep-alive 复用时的后台刷新，不显示遮罩，先展示缓存内容再默默更新。
   if (!silent) loading.value = true
@@ -998,6 +1158,7 @@ async function openDetail(id: number) {
   bdError.value = ''
   bdRequested.value = false
   await loadBreakdown(id)
+  if (!Object.keys(hookCriteria.value).length) loadHookCriteria()
 }
 
 async function removeAsset() {
@@ -1320,6 +1481,8 @@ onUnmounted(() => {
 @media (max-width: 640px) {
   .wf-step { width: 100%; }
   .wf-blocked { margin-left: auto; }
+  .moment-row { flex-wrap: wrap; }
+  .moment-drivers { width: 100%; }
 }
 
 /* 横向 tab 栏 */
@@ -1392,7 +1555,55 @@ onUnmounted(() => {
 .comment-hint { color: #909399; font-size: 12px; }
 .tier-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .tier-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 10px 0; }
-.understand { background: #fafafa; border: 1px solid #f0f0f0; border-radius: 6px; padding: 10px; font-size: 13px; }
+.understand {
+  background: var(--surface-2); border: 1px solid var(--line-soft);
+  padding: 12px 14px; font-size: var(--fs-md); color: var(--ink-2);
+}
+.understand p { margin: 4px 0; }
+/* 证据类别：不是装饰标签，是「这条素材该从哪找爆点」的结论，用色区分三类 */
+.ev-pill {
+  display: inline-flex; align-items: center; margin-left: 8px;
+  padding: 1px 7px; border: 1px solid var(--line); background: var(--surface);
+  font-size: var(--fs-xs); color: var(--ink-2);
+}
+.ev-pill.ev-words { border-color: color-mix(in oklab, var(--accent-2) 45%, var(--line)); color: var(--accent-2); }
+.ev-pill.ev-reaction { border-color: color-mix(in oklab, var(--warn) 65%, var(--line)); color: color-mix(in oklab, var(--warn) 55%, var(--ink)); }
+.ev-pill.ev-visual { border-color: color-mix(in oklab, var(--accent) 45%, var(--line)); color: var(--accent); }
+
+/* 候选片段：时间 + 强度条 + 依据 */
+.moment-block, .signal-block { margin: 14px 0 6px; }
+.moment-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.moment-head b { font-size: var(--fs-md); color: var(--ink); }
+.moment-list { display: flex; flex-direction: column; gap: 5px; }
+.moment-row { display: flex; align-items: center; gap: 9px; font-size: var(--fs-sm); }
+.moment-time {
+  flex: none; min-width: 92px; font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.moment-bar {
+  flex: 1 1 120px; height: 9px; min-width: 60px;
+  background: var(--surface-3); border: 1px solid var(--line-soft); overflow: hidden;
+}
+.moment-bar-fill { display: block; height: 100%; background: var(--accent); }
+.moment-score {
+  flex: none; min-width: 38px; text-align: right;
+  font-family: var(--font-mono); font-variant-numeric: tabular-nums; color: var(--muted);
+}
+.moment-drivers { flex: none; display: flex; gap: 4px; flex-wrap: wrap; }
+.driver {
+  padding: 0 5px; border: 1px solid var(--line-soft); background: var(--surface);
+  font-size: var(--fs-xs); color: var(--ink-2); cursor: default;
+}
+
+/* 通篇信号：等宽格子拼成的时间带，每格是若干秒的峰值响度 */
+.signal-strip {
+  display: flex; gap: 1px; height: 46px; align-items: flex-end;
+  border: 1px solid var(--line-soft); background: var(--surface); padding: 2px;
+}
+.signal-cell { flex: 1 1 0; min-width: 1px; display: block; }
+.signal-legend { display: flex; align-items: center; gap: 6px; margin-top: 6px; font-size: var(--fs-xs); color: var(--muted); }
+.legend-swatch { display: inline-block; width: 12px; height: 9px; border: 1px solid var(--line-soft); }
+.signal-legend .grow { flex: 1; }
 .dims { display: flex; flex-direction: column; gap: 4px; margin: 8px 0; }
 .dim { display: flex; gap: 8px; }
 .dim-k { color: #909399; min-width: 88px; }
@@ -1415,4 +1626,16 @@ onUnmounted(() => {
 .ui-link-btn:hover { text-decoration: underline; text-underline-offset: 2px; }
 .bd-list { margin: 4px 0; padding-left: 20px; font-size: 13px; }
 .bd-list li { margin: 2px 0; }
+.hm-list { display: flex; flex-direction: column; gap: 6px; }
+.hm-row {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 6px 9px; border: 1px solid var(--line-soft); background: var(--surface-2);
+  font-size: var(--fs-sm);
+}
+.hm-name { flex: none; font-weight: 700; color: var(--accent); }
+.hm-seg {
+  flex: none; padding: 0 5px; border: 1px solid var(--line-soft); background: var(--surface);
+  font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted);
+}
+.hm-evidence { flex: 1 1 200px; min-width: 0; color: var(--ink-2); }
 </style>

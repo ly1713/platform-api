@@ -9,11 +9,13 @@
   是否自动转录、自动视频理解、自动拆解。都存 KV，用户可在设置页按需调。
 """
 
+import json
 import math
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.hook_criteria import DEFAULT_HOOK_CRITERIA, valid_criteria
 from app.models import SystemSetting
 
 # system_setting key（单一事实来源；API / 服务复用此映射）。
@@ -35,6 +37,8 @@ BREAKDOWN_KEYS: dict[str, str] = {
     "auto_transcribe": "breakdown_auto_transcribe",
     "auto_understand": "breakdown_auto_understand",
     "auto_breakdown": "breakdown_auto_breakdown",
+    # 爆点判据表（JSON 数组）。拆解提示词据此逐条对照，输出 hook_matches。
+    "hook_criteria": "breakdown_hook_criteria",
 }
 
 # 内置默认提示词：定义报告 JSON 结构 + 各分析维度 + 禁编造约束。
@@ -81,9 +85,27 @@ _DEFAULTS: dict[str, tuple[object, str]] = {
     "breakdown_auto_transcribe": (True, "bool"),
     "breakdown_auto_understand": (False, "bool"),
     "breakdown_auto_breakdown": (False, "bool"),
+    # 判据表不走 _coerce：是 JSON 列表，单独解析（见 _parse_criteria）。
+    "breakdown_hook_criteria": (None, "str"),
 }
 
 _MATCH_RULES = ("any", "all")
+
+
+def _parse_criteria(raw: object) -> list[dict[str, str]]:
+    """解析判据表；任何非法（坏 JSON / 缺字段 / id 重复）都回退内置默认。
+
+    判据表决定「模型认为什么算爆点」，坏数据不能让整条拆解失败，
+    但也不能静默变成空表（空表 = 没有任何判断标准），只能回退默认。
+    """
+    if isinstance(raw, str) and raw.strip():
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return list(DEFAULT_HOOK_CRITERIA)
+    if valid_criteria(raw):
+        return [dict(item) for item in raw]  # type: ignore[arg-type]
+    return list(DEFAULT_HOOK_CRITERIA)
 
 
 def _coerce(raw, default, kind: str):
@@ -123,9 +145,15 @@ def resolve_breakdown_settings_from_rows(rows: dict[str, str]) -> dict:
     if not math.isfinite(mult) or mult <= 0:
         mult = _DEFAULT_VIRAL_MULTIPLE
 
-    out: dict = {"prompt": prompt, "viral_multiple": mult}
+    out: dict = {
+        "prompt": prompt,
+        "viral_multiple": mult,
+        "hook_criteria": _parse_criteria(rows.get("breakdown_hook_criteria")),
+    }
     for key, (default, kind) in _DEFAULTS.items():
         short = key[len("breakdown_"):]  # breakdown_min_play -> min_play
+        if key == "breakdown_hook_criteria":
+            continue  # 上面已单独解析
         value = _coerce(rows.get(key), default, kind)
         if kind in ("int", "float"):
             if not isinstance(value, (int, float)) or not math.isfinite(float(value)) or value < 0:

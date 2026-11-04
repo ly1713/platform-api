@@ -22,6 +22,12 @@ import re
 from typing import Callable
 
 from app.core.breakdown_settings import DEFAULT_BREAKDOWN_PROMPT
+from app.core.evidence_class import evidence_guidance
+from app.core.hook_criteria import (
+    DEFAULT_HOOK_CRITERIA,
+    criteria_prompt_block,
+    hook_matches_instruction,
+)
 
 logger = logging.getLogger("platform.breakdown")
 
@@ -80,12 +86,26 @@ def build_breakdown_prompt(payload: dict) -> tuple[str, str]:
         timeline,          # 视频理解 timeline（L3）
         understanding,     # 视频理解 {summary, dimensions, ...}（L3）
         comments,          # Top-N 评论正文（list[str]）
+        hook_criteria,     # 爆点判据表（list[{id,name,ask}]，可配置）
+        evidence_class,    # words/reaction/visual，决定「该信哪路证据」
+        moments,           # 视听信号融合出的候选片段（客观测量，非模型产出）
 
     system 提示词优先取 payload["prompt"]（服务层从设置读取，可在线改），否则用内置默认。
+    判据表与证据类别**追加**在 system 之后：用户的自定义提示词仍然是最主要的约束，
+    这两段只补「按什么标准找爆点」「这类素材该信哪路证据」两件模型无法自己知道的事。
     """
     system = payload.get("prompt")
     if not isinstance(system, str) or not system.strip():
         system = DEFAULT_BREAKDOWN_PROMPT
+
+    raw_criteria = payload.get("hook_criteria")
+    criteria = raw_criteria if isinstance(raw_criteria, list) and raw_criteria else DEFAULT_HOOK_CRITERIA
+    system += "\n\n" + criteria_prompt_block(criteria)
+    system += "\n输出 JSON 中增加字段：" + hook_matches_instruction(criteria)
+
+    evidence_class = payload.get("evidence_class")
+    if isinstance(evidence_class, str) and evidence_class:
+        system += "\n\n【本片证据优先级】" + evidence_guidance(evidence_class)
 
     # 互动数字：既列当前值，也列后端算好的上下文（相对中位数倍数/互动率）。
     metric_lines = [
@@ -123,6 +143,20 @@ def build_breakdown_prompt(payload: dict) -> tuple[str, str]:
     timeline = payload.get("timeline")
     timeline_text = _dump(timeline) if timeline else "（无）"
 
+    moments = payload.get("moments")
+    moment_lines = []
+    for m in moments if isinstance(moments, list) else []:
+        if not isinstance(m, dict):
+            continue
+        try:
+            start = int(round(float(m.get("start", 0))))
+            end = int(round(float(m.get("end", 0))))
+        except (TypeError, ValueError):
+            continue
+        drivers = m.get("drivers")
+        why = "/".join(drivers.keys()) if isinstance(drivers, dict) and drivers else "综合"
+        moment_lines.append(f"- {start}-{end}s（{why}，强度 {m.get('score', 0)}）")
+
     user = (
         "【作品元数据】\n"
         f"平台：{_fmt(payload.get('platform'))}\n"
@@ -138,6 +172,14 @@ def build_breakdown_prompt(payload: dict) -> tuple[str, str]:
         + understanding_text
         + "\n\n【时间轴】\n"
         + timeline_text
+        + "\n\n【系统测得的候选片段】\n"
+        + (
+            "以下由 ffmpeg 测量响度/镜头切换/运动量融合得出，是客观测量而非模型推测；\n"
+            "可作为「高能区在哪」的定位依据，但**不能替代**你对内容价值的判断：\n"
+            + "\n".join(moment_lines)
+            if moment_lines
+            else "（无）"
+        )
         + "\n\n【评论区 Top 摘要】\n"
         + ("\n".join(f"- {c}" for c in comment_lines) if comment_lines else "（无评论摘要）")
     )

@@ -26,6 +26,16 @@ PROCESS_KEYS: dict[str, str] = {
     "weight_comment": "process_weight_comment",
     "weight_play": "process_weight_play",
     "video_max_mb": "process_video_max_mb",
+    # 长视频分块（超过阈值就切块理解，避免整片压烂）。
+    "chunk_threshold_sec": "process_chunk_threshold_sec",
+    "chunk_seconds": "process_chunk_seconds",
+    "chunk_overlap_sec": "process_chunk_overlap_sec",
+    # 视听信号（响度/镜头切换/运动量）驱动选段。
+    "signals_enabled": "process_signals_enabled",
+    # 两级漏斗：本地小模型先初筛，云端只精读入围部分。
+    "prefilter_enabled": "process_prefilter_enabled",
+    "prefilter_min_chars": "process_prefilter_min_chars",
+    "prefilter_timeout_sec": "process_prefilter_timeout_sec",
     "classify_enabled": "process_classify_enabled",
     "use_cover": "process_use_cover",
     "cover_max_mb": "process_cover_max_mb",
@@ -46,6 +56,18 @@ _DEFAULTS: dict[str, tuple[object, str]] = {
     "process_weight_comment": (2.0, _FLOAT),
     "process_weight_play": (0.0, _FLOAT),
     "process_video_max_mb": (15.0, _FLOAT),
+    # 超过该时长的视频分块理解。600 秒是个平衡点：短视频平台里长于 10 分钟
+    # 的内容（长口播、合集、直播回放）单次请求压不到可用画质。
+    "process_chunk_threshold_sec": (600, _INT),
+    # 单块目标时长与块间重叠。重叠给跨块的句子留上下文。
+    "process_chunk_seconds": (300, _INT),
+    "process_chunk_overlap_sec": (15, _INT),
+    # 信号采集默认开启：纯本地 ffmpeg，成本低，是选段的重要证据。
+    "process_signals_enabled": (True, _BOOL),
+    # 漏斗默认关闭：需要用户先配好本地小模型端点，否则每任务多一次失败尝试。
+    "process_prefilter_enabled": (False, _BOOL),
+    "process_prefilter_min_chars": (3000, _INT),
+    "process_prefilter_timeout_sec": (120, _INT),
     "process_classify_enabled": (True, _BOOL),
     "process_use_cover": (False, _BOOL),
     "process_cover_max_mb": (5.0, _FLOAT),

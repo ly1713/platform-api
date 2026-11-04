@@ -31,6 +31,7 @@ from app.modules import model_protocols
 from app.services import model_probe
 from app.services.legacy_llm_migration import legacy_migration_status
 from app.services.model_access_service import (
+    REQUIRED_WORK_TYPES,
     WORK_TYPES,
     capabilities_of,
     model_access_setup_state,
@@ -961,7 +962,9 @@ def recommend_assignments(
 ):
     started = time.time()
     models = db.scalars(select(AiModel).where(AiModel.enabled.is_(True)).order_by(AiModel.id)).all()
-    for work_type in WORK_TYPES:
+    # 只自动推荐三个核心槽位。初筛默认要的是**便宜的本地小模型**，把它自动指到
+    # 云端大模型上等于「为了省钱反而多花钱」，必须由用户自己指定。
+    for work_type in REQUIRED_WORK_TYPES:
         assignment = db.scalar(select(ModelAssignment).where(ModelAssignment.work_type == work_type))
         if assignment is not None and assignment.primary_model_id is not None:
             continue

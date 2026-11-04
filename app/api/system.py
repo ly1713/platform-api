@@ -435,6 +435,15 @@ def update_breakdown_settings_api(body: dict, db: Session = Depends(get_db)):
             if not isinstance(value, bool):
                 raise HTTPException(status_code=422, detail=f"{short} 必须是布尔")
             normalized[BREAKDOWN_KEYS[short]] = "true" if value else "false"
+        elif short == "hook_criteria":
+            from app.core.hook_criteria import valid_criteria
+
+            if not valid_criteria(value):
+                raise HTTPException(
+                    status_code=422,
+                    detail="hook_criteria 必须是非空数组，每项含唯一的 id / name / ask",
+                )
+            normalized[BREAKDOWN_KEYS["hook_criteria"]] = json.dumps(value, ensure_ascii=False)
         # 未知键忽略（与既有 /settings、/comment-settings 行为一致）
 
     for key, value in normalized.items():
@@ -536,6 +545,14 @@ _PROCESS_SPECS = {
     "low_confidence_threshold": lambda v: _as_float(v, lo=0.0, hi=1.0),
     "classify_enabled": _as_bool,
     "use_cover": _as_bool,
+    # 长视频分块：阈值为 0 = 关闭分块；单块时长不能少于重叠，否则切不出有效块。
+    "chunk_threshold_sec": lambda v: _as_int(v, lo=0),
+    "chunk_seconds": lambda v: _as_int(v, lo=30),
+    "chunk_overlap_sec": lambda v: _as_int(v, lo=0),
+    "signals_enabled": _as_bool,
+    "prefilter_enabled": _as_bool,
+    "prefilter_min_chars": lambda v: _as_int(v, lo=0),
+    "prefilter_timeout_sec": lambda v: _as_int(v, lo=1),
     # 全局自动加工默认（新素材下载完成后是否自动转录/分析）。
     "auto_transcribe": _as_bool,
     "auto_analyze": _as_bool,

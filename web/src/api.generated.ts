@@ -397,6 +397,7 @@ export interface BreakdownSettingsOut {
   "auto_transcribe": boolean
   "auto_understand": boolean
   "auto_breakdown": boolean
+  "hook_criteria"?: Record<string, unknown>[]
 }
 
 /** BreakdownSettingsUpdateOut */
@@ -1015,6 +1016,13 @@ export interface ProcessSettingsOut {
   "low_confidence_threshold": number
   "classify_enabled": boolean
   "use_cover": boolean
+  "chunk_threshold_sec"?: number
+  "chunk_seconds"?: number
+  "chunk_overlap_sec"?: number
+  "signals_enabled"?: boolean
+  "prefilter_enabled"?: boolean
+  "prefilter_min_chars"?: number
+  "prefilter_timeout_sec"?: number
   "auto_transcribe": boolean
   "auto_analyze": boolean
   "taxonomy"?: Record<string, string>
@@ -1473,6 +1481,12 @@ export interface UnderstandingOut {
   "category_confidence"?: number
   "category_reason"?: string
   "low_confidence"?: boolean
+  "understanding_confidence"?: number
+  "evidence_class"?: string
+  "signals"?: Record<string, unknown> | null
+  "moments"?: unknown[]
+  "chunk_count"?: number
+  "chunk_plan"?: unknown[]
   "dimensions"?: Record<string, unknown>
   "summary"?: string
   "timeline"?: unknown[]

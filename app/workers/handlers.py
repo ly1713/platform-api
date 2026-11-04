@@ -627,7 +627,11 @@ async def handle_refresh_metrics(db: Session, payload: dict) -> None:
 
 async def handle_understand_video(db: Session, payload: dict, job=None) -> None:
     """高级档视频理解：判类 → 类型专属提示词 → 调 vision → 写 VideoUnderstanding。"""
-    from app.services.understand_service import UnderstandInputError, run_understand
+    from app.services.understand_service import (
+        UnderstandInputError,
+        VideoTooLarge,
+        run_understand,
+    )
     from app.services.model_access_service import ModelConfigError
 
     asset_id = payload["asset_id"]
@@ -644,6 +648,10 @@ async def handle_understand_video(db: Session, payload: dict, job=None) -> None:
         )
     except UnderstandInputError as exc:
         # 数据问题（素材/内容缺失）不可重试，直接置 error，避免无谓重试。
+        raise queue.NonRetryableJobError(str(exc)) from exc
+    except VideoTooLarge as exc:
+        # 压到画质下限仍超限是**确定性**失败：同样的文件重跑三遍结果完全一样，
+        # 只会把一次失败放大成三次 + 三条告警。修复要用户改配置或换素材。
         raise queue.NonRetryableJobError(str(exc)) from exc
     except ModelConfigError as exc:
         # 配置可修复但不是瞬时故障；自动重试只会制造三倍失败与告警。

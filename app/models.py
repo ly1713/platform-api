@@ -634,6 +634,18 @@ class VideoUnderstanding(Base):
     # 模型对「这份画面描述有多可信」的自评（0-1）。之前算出来就被丢弃，拆解因此
     # 无法区分「确实看清了」和「只是猜的」，只能一律当事实引用。
     understanding_confidence: Mapped[float] = mapped_column(Float, default=0)
+    # 这条素材的爆点靠哪路证据（words/reaction/visual）。品类路由据此切换
+    # 提示词侧重与信号权重——「没有台词的跳舞视频」和「带货口播」不能用一套判据。
+    evidence_class: Mapped[str] = mapped_column(String(16), default="words")
+    # 客观视听信号（响度峰值/镜头切换/运动量）。信号是选段证据，不是模型产出，
+    # 单独存便于复算与前端画时间轴。
+    signals: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    # 由信号融合出的候选片段，含 drivers（靠哪路证据入选）。
+    moments: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    # 长视频被切成几块、每块的原始时间范围（含重叠）。没有它无法解释
+    # timeline 的偏移是怎么加回来的。
+    chunk_count: Mapped[int] = mapped_column(Integer, default=1)
+    chunk_plan: Mapped[list | None] = mapped_column(JSON, nullable=True)
     dimensions: Mapped[dict] = mapped_column(JSON, default=dict)  # 类型专属维度 → 值
     summary: Mapped[str] = mapped_column(Text, default="")
     timeline: Mapped[list] = mapped_column(JSON, default=list)

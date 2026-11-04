@@ -557,6 +557,8 @@ class BreakdownSettingsOut(BaseModel):
     auto_transcribe: bool
     auto_understand: bool
     auto_breakdown: bool
+    # 爆点判据表（按影响力排序）。拆解提示词据此逐条对照并输出 hook_matches。
+    hook_criteria: list[dict] = []
 
 
 class BreakdownSettingsUpdateOut(BaseModel):
@@ -597,6 +599,16 @@ class ProcessSettingsOut(BaseModel):
     low_confidence_threshold: float
     classify_enabled: bool
     use_cover: bool
+    # 长视频分块理解：超过阈值切成带重叠的块，各块理解后汇总。
+    chunk_threshold_sec: int = 600
+    chunk_seconds: int = 300
+    chunk_overlap_sec: int = 15
+    # 视听信号（响度/镜头切换/运动量）驱动选段。
+    signals_enabled: bool = True
+    # 两级漏斗：本地小模型先圈重点区间，云端只精读入围部分（默认关）。
+    prefilter_enabled: bool = False
+    prefilter_min_chars: int = 3000
+    prefilter_timeout_sec: int = 120
     auto_transcribe: bool
     auto_analyze: bool
     taxonomy: dict[str, str] = {}
@@ -791,6 +803,15 @@ class UnderstandingOut(BaseModel):
     category_confidence: float = 0
     category_reason: str = ""
     low_confidence: bool = False
+    understanding_confidence: float = 0
+    # 这条素材的爆点靠哪路证据（words/reaction/visual）——前端据此决定
+    # 展示「台词定位」还是「画面/反应时间轴」。
+    evidence_class: str = "words"
+    # 客观视听信号与由它融合出的候选片段（含 drivers）。
+    signals: dict | None = None
+    moments: list = []
+    chunk_count: int = 1
+    chunk_plan: list = []
     dimensions: dict = {}
     summary: str = ""
     timeline: list = []
