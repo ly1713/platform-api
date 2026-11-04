@@ -189,3 +189,92 @@ def test_signals_as_dict_is_json_safe():
     json.dumps(data)  # 不抛异常即通过
     assert data["errors"] == ["响度采集失败: x"]
     assert data["loud_peaks"][0]["start"] == 0.0
+
+
+# ---------------------------------------------------------------- 采样步长（真实 bug 回归）
+
+EBUR128_100MS = """frame:0    pts:0       pts_time:0
+lavfi.r128.M=-120.691
+frame:1    pts:4410    pts_time:0.1
+lavfi.r128.M=-8.405
+frame:2    pts:8820    pts_time:0.2
+lavfi.r128.M=-7.1
+frame:3    pts:13230   pts_time:0.3
+lavfi.r128.M=-6.9
+"""
+
+SIGNALSTATS_30FPS = """frame:0 pts:0 pts_time:0.000
+lavfi.signalstats.YAVG=100.0
+frame:1 pts:1 pts_time:0.033
+lavfi.signalstats.YAVG=120.0
+frame:2 pts:2 pts_time:0.066
+lavfi.signalstats.YAVG=110.0
+"""
+
+
+def test_parse_ebur128_reports_real_step():
+    """ebur128 每 100ms 一个 M 值，不是每秒一个。
+
+    早期把每个点当 1 秒，38 秒的视频算出 383 秒、峰值区间落到片外，
+    候选片段一个都出不来（且不报错）。
+    """
+    values, step = vs.parse_ebur128_series(EBUR128_100MS)
+    assert values == [-120.691, -8.405, -7.1, -6.9]
+    assert step == pytest.approx(0.1)
+
+
+def test_parse_ebur128_falls_back_to_100ms_without_pts():
+    values, step = vs.parse_ebur128_series("lavfi.r128.M=-9.0\n")
+    assert values == [-9.0]
+    assert step == pytest.approx(0.1)
+
+
+def test_parse_motion_reports_frame_step():
+    curve, step = vs.parse_motion_series(SIGNALSTATS_30FPS)
+    assert len(curve) == 2
+    assert step == pytest.approx(0.033, abs=1e-3)
+
+
+def test_find_peaks_maps_index_to_seconds_by_step():
+    """步长必须参与时间换算：同一条曲线换步长，秒数应等比缩放。"""
+    curve = [-20.0] * 10 + [-5.0, -4.0, -6.0] + [-20.0] * 20
+    one_sec, _ = _peaks(curve, step=1.0)
+    tenth, _ = _peaks(curve, step=0.1)
+    assert one_sec is not None and tenth is not None
+    assert tenth.start == pytest.approx(one_sec.start * 0.1, abs=1e-6)
+    assert tenth.end == pytest.approx(one_sec.end * 0.1, abs=1e-6)
+
+
+def _peaks(curve, *, step):
+    found = vs.find_peaks(curve, step=step, min_duration=step * 0.9, merge_gap=step * 2)
+    return (found[0] if found else None), found
+
+
+def test_resample_curve_takes_max_not_mean():
+    """按桶取最大值：均值会把一闪而过的动作摊平，而那就是要找的高光。"""
+    # 6 个点、每点 0.5 秒 → 每桶 2 点 = 3 个 1 秒桶
+    curve = [0.0, 0.9, 0.0, 0.05, 0.0, 0.0]
+    bucketed, step = vs.resample_curve(curve, step=0.5, target_step=1.0)
+    assert bucketed == [0.9, 0.05, 0.0]  # 取桶内最大值，不是均值
+    assert step == pytest.approx(1.0)
+
+
+def test_resample_curve_is_noop_when_already_coarse():
+    curve = [0.1, 0.2]
+    bucketed, step = vs.resample_curve(curve, step=2.0, target_step=0.5)
+    assert bucketed == curve
+    assert step == pytest.approx(2.0)
+
+
+def test_motion_peak_detected_from_single_bucket():
+    """运动量是短促尖峰：单个桶就该算一个峰。
+
+    min_duration 若等于/大于桶宽，要求「持续两个桶」，短促高光会被全部滤掉
+    （实测 30 秒素材两个最强峰都因此消失）。
+    """
+    bucketed = [0.001, 0.15, 0.001, 0.001, 0.002]
+    found = vs.find_peaks(
+        bucketed, min_delta=0.075, min_duration=0.45, step=0.5, merge_gap=1.0
+    )
+    assert len(found) == 1
+    assert found[0].start == pytest.approx(0.5)

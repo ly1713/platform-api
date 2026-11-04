@@ -49,6 +49,8 @@ SCDET_FILTER_THRESHOLD = 0.0
 # 相邻切换点的最小间隔（秒）：一次渐变转场会在多帧上连续高分，
 # 不去重会把一次转场算成十几次。
 MIN_CUT_GAP_SECONDS = 0.35
+# 运动量曲线的聚合桶宽（秒）。单帧尖峰按这个粒度聚合成「这半秒动得多厉害」。
+MOTION_BUCKET_SECONDS = 0.5
 # 低于该值的响度视为静音（ebur128 对无声段给 -120 dB）。
 # 不排掉这些点，整条曲线的跨度会被撑大、峰值阈值失效。
 SILENCE_FLOOR = -70.0
@@ -105,30 +107,42 @@ def _range_dict(r: TimeRange) -> dict:
 # --------------------------------------------------------------------------- 解析（纯函数）
 
 
-def parse_ebur128(text: str) -> list[float]:
-    """从 ``ebur128=metadata=1,ametadata=print`` 的输出里抽出逐帧瞬时响度。
+def parse_ebur128_series(text: str) -> tuple[list[float], float]:
+    """解析瞬时响度序列，返回 ``(逐点 M 值, 相邻点间隔秒数)``。
 
     实测该滤镜的输出形如（每次 frame 后跟一组 lavfi.r128.*）::
 
         frame:0    pts:0       pts_time:0
         lavfi.r128.M=-120.691
-        lavfi.r128.S=-120.691
+        frame:1    pts:4410    pts_time:0.1
+        lavfi.r128.M=-120.691
+
+    **采样间隔不是 1 秒**：实测 ebur128 每 100 ms 输出一个 M 值（pts 步进 4410
+    @44.1kHz）。早期实现把每个点当成 1 秒，38 秒的视频被读成 383 秒，峰值区间
+    落到片外——不报错，只是候选片段全部消失。所以这里直接从 ``pts_time`` 反算
+    真实步长，而不是假定。
+
+    拿不到 pts_time 时退回 0.1 秒（ebur128 的固定元数据周期）。
 
     取 ``M``（momentary，瞬时响度）。注意早期写法靠解析 ``t: ... M: ...`` 的
     summary 行是错的——那行只在结尾出现一次，拿不到时间序列。这里做的是
     「按 frame 折叠」：每个 frame 的 M 值收成一个点。
 
-    解析不出来返回空列表——信号是增强项，解析失败不该报错。
+    解析不出来返回 ``([], 0.0)``——信号是增强项，解析失败不该报错。
     """
     values: list[float] = []
+    times: list[float] = []
     pending: float | None = None
+    pending_t = 0.0
     for line in (text or "").splitlines():
         line = line.strip()
         if line.startswith("frame:"):
             # 新的一帧开始：把上一帧攒到的值落下来
             if pending is not None:
                 values.append(pending)
+                times.append(pending_t)
                 pending = None
+            pending_t = _pts_time_of(line, pending_t)
             continue
         if "lavfi.r128.M=" in line:
             try:
@@ -137,7 +151,34 @@ def parse_ebur128(text: str) -> list[float]:
                 pending = None
     if pending is not None:
         values.append(pending)
-    return values
+        times.append(pending_t)
+
+    step = 0.0
+    if len(times) >= 2:
+        deltas = [b - a for a, b in zip(times, times[1:]) if b > a]
+        if deltas:
+            deltas.sort()
+            step = deltas[len(deltas) // 2]
+    return values, round(step, 4) if step > 0 else 0.1
+
+
+def _pts_time_of(frame_line: str, fallback: float) -> float:
+    """从 ``frame:N  pts:..  pts_time:1.2`` 里取 pts_time；取不到沿用上一个值。"""
+    marker = "pts_time:"
+    index = frame_line.find(marker)
+    if index < 0:
+        return fallback
+    tail = frame_line[index + len(marker):].strip()
+    token = tail.split()[0] if tail else ""
+    try:
+        return float(token)
+    except ValueError:
+        return fallback
+
+
+def parse_ebur128(text: str) -> list[float]:
+    """只要响度序列时的便捷入口（等价于 ``parse_ebur128_series(text)[0]``）。"""
+    return parse_ebur128_series(text)[0]
 
 
 def parse_scdet(text: str) -> list[float]:
@@ -200,21 +241,54 @@ def _dedupe_times(times: list[float], *, min_gap: float) -> list[float]:
     return out
 
 
-def parse_motion(stderr_text: str) -> list[float]:
-    """从 ``signalstats,metadata=print`` 的输出里抽出逐帧 YAVG，转成帧差分数。
+def parse_motion_series(text: str) -> tuple[list[float], float]:
+    """从 ``signalstats,metadata=print`` 输出解析运动量曲线，返回 ``(逐点帧差, 步长秒)``。
 
     输入是 ``lavfi.signalstats.YAVG=<0-255>`` 序列。返回相邻帧亮度均值差的归一化分数（0..1）。
+
+    **必须同时返回步长**：signalstats 是逐帧统计，25fps 素材每点 0.04 秒、60fps
+    每点 0.0167 秒。当成「每秒一个点」会把 38 秒视频读成 1149 秒，运动峰落到
+    821 秒（实测），融合时按片长切窗口就一个候选都选不出来。
+    步长从 ``pts_time`` 中位数反算，取不到时退回 1/30 秒。
     """
     values: list[float] = []
-    pattern = re.compile(r"lavfi\.signalstats\.YAVG=([0-9.]+)")
-    for match in pattern.finditer(stderr_text or ""):
-        try:
-            values.append(float(match.group(1)) / 255.0)
-        except ValueError:
+    times: list[float] = []
+    current_t = 0.0
+    current: float | None = None
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("frame:"):
+            if current is not None:
+                values.append(current)
+                times.append(current_t)
+                current = None
+            current_t = _pts_time_of(stripped, current_t)
             continue
+        match = re.search(r"lavfi\.signalstats\.YAVG=([0-9.]+)", stripped)
+        if match:
+            try:
+                current = float(match.group(1)) / 255.0
+            except ValueError:
+                current = None
+    if current is not None:
+        values.append(current)
+        times.append(current_t)
+
+    step = 0.0
+    if len(times) >= 2:
+        deltas = [b - a for a, b in zip(times, times[1:]) if b > a]
+        if deltas:
+            deltas.sort()
+            step = deltas[len(deltas) // 2]
     if len(values) < 2:
-        return []
-    return [abs(values[i] - values[i - 1]) for i in range(1, len(values))]
+        return [], round(step, 4) if step > 0 else 0.0
+    diffs = [abs(values[i] - values[i - 1]) for i in range(1, len(values))]
+    return diffs, round(step, 4) if step > 0 else 1 / 30
+
+
+def parse_motion(stderr_text: str) -> list[float]:
+    """只要运动量曲线时的便捷入口（等价于 ``parse_motion_series(text)[0]``）。"""
+    return parse_motion_series(stderr_text)[0]
 
 
 # --------------------------------------------------------------------------- 区间提取（纯函数）
@@ -227,6 +301,7 @@ def find_peaks(
     min_duration: float = 1.0,
     merge_gap: float = 2.0,
     limit: int = 12,
+    step: float = 1.0,
 ) -> list[TimeRange]:
     """在逐秒曲线上找「持续显著高于中位」的区间。
 
@@ -238,11 +313,18 @@ def find_peaks(
       门槛被推到 +6 dB，结果一个峰值都选不出来。
 
     Args:
-        curve: 每秒一个值。
+        curve: 一条等间隔采样曲线。
         min_delta: 相对中位的绝对增量门槛（响度单位是 dB，默认 2 dB）。
-        min_duration: 区间最短时长，过滤单帧噪点。
-        merge_gap: 相邻区间间隔小于它时合并。
+        min_duration: 区间最短时长（秒），过滤单帧噪点。
+        merge_gap: 相邻区间间隔小于它时合并（秒）。
         limit: 最多返回多少个，按得分降序。
+        step: **每个采样点代表多少秒**。
+
+            这个参数不能省：ebur128 实测每 0.1 秒输出一个 M 值、signalstats
+            逐帧输出（30fps 就是每点 0.033 秒）。早期实现把它们都当成「每秒一个点」，
+            于是一条 38 秒的视频算出 383 个采样点、峰值区间落到 250~337 秒——
+            时间轴整体被拉长 10 倍，远超片长。这种错不会报错，只会让下游
+            「候选片段」全部落在片外（融合时按片长切窗口，结果一个都选不出来）。
     """
     if not curve:
         return []
@@ -254,17 +336,30 @@ def find_peaks(
     if max(clean) < threshold:
         return []
 
+    step = max(1e-6, float(step))
     ranges: list[TimeRange] = []
-    start: float | None = None
-    for second, value in enumerate(curve):
+    start: int | None = None
+    for index, value in enumerate(curve):
         hot = value == value and value > SILENCE_FLOOR and value >= threshold
         if hot and start is None:
-            start = float(second)
+            start = index
         elif not hot and start is not None:
-            ranges.append(TimeRange(start, float(second), _peak_score(curve, start, second, median)))
+            ranges.append(
+                TimeRange(
+                    start * step,
+                    index * step,
+                    _peak_score(curve, start, index, median),
+                )
+            )
             start = None
     if start is not None:
-        ranges.append(TimeRange(start, float(len(curve)), _peak_score(curve, start, len(curve), median)))
+        ranges.append(
+            TimeRange(
+                start * step,
+                len(curve) * step,
+                _peak_score(curve, start, len(curve), median),
+            )
+        )
 
     merged: list[TimeRange] = []
     for item in ranges:
@@ -278,12 +373,44 @@ def find_peaks(
     return merged[:limit]
 
 
-def _peak_score(curve: list[float], start: float, end: float, baseline: float) -> float:
+def _peak_score(curve: list[float], start: int, end: int, baseline: float) -> float:
+    """区间内的峰值相对基线的增量。start/end 是**采样点索引**，不是秒。"""
     window = curve[int(start) : int(end)]
     if not window:
         return 0.0
     peak = max(window)
     return round(float(peak - baseline), 3)
+
+
+def resample_curve(curve: list[float], *, step: float, target_step: float) -> tuple[list[float], float]:
+    """把高采样率曲线按时间桶聚合成低采样率，返回 ``(新曲线, 新步长)``。
+
+    为什么要这一步：signalstats 是逐帧输出（30fps→每点 0.033 秒），而运动量
+    本身是**单帧尖峰**——实测一条口播 599 个点里中位数只有 0.0002，峰值 0.157，
+    两者差 800 倍。直接在这个曲线上按「持续 0.5 秒」找峰，一个都找不到，
+    因为真正的高值只有一两帧。按 0.5 秒桶取**最大值**聚合后，语义才对：
+    「这半秒内画面动得最厉害到什么程度」。
+
+    取最大值而不是均值：均值会把一闪而过的动作（恰恰是要找的高光）摊平。
+
+    Args:
+        curve: 原始曲线。
+        step: 原始每个点代表的秒数。
+        target_step: 目标每桶秒数。
+
+    Returns:
+        ``(聚合后的曲线, 实际桶宽)``；输入为空或参数非法时原样返回。
+    """
+    if not curve or step <= 0 or target_step <= 0:
+        return list(curve or []), step
+    if step >= target_step:
+        return list(curve), step
+    size = max(1, int(round(target_step / step)))
+    out: list[float] = []
+    for i in range(0, len(curve), size):
+        bucket = curve[i : i + size]
+        out.append(max(bucket))
+    return out, step * size
 
 
 def detect_cut_density(
@@ -432,10 +559,14 @@ def collect_signals(video_path: str, *, duration: float | None = None) -> MediaS
                 "-f", "null", "-",
             ]
         )
-        curve = parse_ebur128(loudness)
+        curve, step = parse_ebur128_series(loudness)
         if curve:
             signals.loudness_curve = curve
-            signals.loud_peaks = find_peaks(curve)
+            # 步长是**实测**的（ebur128 每 100ms 一个点），不是「1 点 = 1 秒」。
+            # 传错步长会让峰值区间整体落在片外，候选片段一个都出不来。
+            signals.loud_peaks = find_peaks(
+                curve, step=step or 1.0, min_duration=1.0, merge_gap=2.0
+            )
     except Exception as exc:  # noqa: BLE001 信号是增强项
         signals.errors.append(f"响度采集失败: {exc}"[:200])
 
@@ -464,14 +595,28 @@ def collect_signals(video_path: str, *, duration: float | None = None) -> MediaS
                 "-an", "-f", "null", "-",
             ]
         )
-        motion = parse_motion(motion_out)
+        motion, motion_step = parse_motion_series(motion_out)
         if motion:
-            signals.motion_curve = motion
             # 运动量的绝对尺度取决于素材（静止机位 max 可能只有 0.007，
             # 手持运镜能到 0.3）。门槛按本片最大值的比例给，跨素材才可比。
             peak = max(motion)
             delta = max(0.005, peak * 0.5)
-            signals.motion_peaks = find_peaks(motion, min_delta=delta, min_duration=0.5)
+            # 步长是帧间隔（25fps→0.04s），不是 1 秒。运动量是单帧尖峰，
+            # 先按 0.5 秒桶取最大值再找峰——否则「持续 0.5 秒」的条件
+            # 会把所有一闪而过的动作全部滤掉（实测 599 点里一个峰都没有）。
+            bucketed, bucketed_step = resample_curve(
+                motion, step=motion_step or (1 / 30), target_step=MOTION_BUCKET_SECONDS
+            )
+            signals.motion_curve = bucketed
+            peak = max(bucketed) if bucketed else 0.0
+            delta = max(0.005, peak * 0.5)
+            # min_duration 必须小于桶宽：单个桶就是「这半秒动得多厉害」的完整
+            # 语义，要求持续两个桶等于要求动作持续 1 秒，短促高光会被全部滤掉
+            # （实测 30 秒素材两个最强峰都因此消失）。
+            signals.motion_peaks = find_peaks(
+                bucketed, min_delta=delta, min_duration=bucketed_step * 0.9,
+                step=bucketed_step, merge_gap=MOTION_BUCKET_SECONDS * 2,
+            )
     except Exception as exc:  # noqa: BLE001
         signals.errors.append(f"运动量采集失败: {exc}"[:200])
 
