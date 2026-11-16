@@ -1110,6 +1110,7 @@ browser = [
     { name = "playwright-stealth" },
 ]
 dev = [
+    { name = "numpy" },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -1133,6 +1134,7 @@ requires-dist = [
     { name = "faster-whisper", marker = "extra == 'transcribe'", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "mcp", marker = "extra == 'mcp'", specifier = ">=2.0" },
+    { name = "numpy", marker = "extra == 'dev'", specifier = ">=1.26" },
     { name = "playwright", marker = "extra == 'browser'", specifier = ">=1.45" },
     { name = "playwright-stealth", marker = "extra == 'browser'", specifier = ">=2.0.3" },
     { name = "psycopg2-binary", marker = "extra == 'postgres'", specifier = ">=2.9" },

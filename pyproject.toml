@@ -26,7 +26,13 @@ browser = [
 postgres = ["psycopg2-binary>=2.9"]
 transcribe = ["faster-whisper>=1.0"]
 mcp = ["mcp>=2.0"]
-dev = ["pytest>=8.0", "pytest-asyncio>=0.23"]
+# numpy is here because ``tests/test_transcription_decode.py`` asserts on the
+# ndarray handed to the model.  Without it that module fails *collection*, so
+# the audio-decode regression it guards was never actually exercised in CI —
+# the suite errored out before running it.  The test fakes the model, so the
+# real transcription stack stays in ``transcribe`` and is covered by the
+# in-image smoke in the release workflow instead.
+dev = ["pytest>=8.0", "pytest-asyncio>=0.23", "numpy>=1.26"]
 
 [build-system]
 requires = ["hatchling"]
