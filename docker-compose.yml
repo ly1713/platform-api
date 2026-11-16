@@ -135,16 +135,22 @@ services:
       UPDATER_API_HEALTH_URL: http://platform-api:9100/api/system/version
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      # updater 需要读 compose 文件来执行 pull/up；只读挂载，防止被改写。
-      - ./docker-compose.yml:/compose/docker-compose.yml:ro
-      # .env 可写挂入：升级成功后 updater 会把 PLATFORM_VERSION 写回这里（pin），
-      # 否则重启/compose up 会按默认 tag 静默回退。create_host_path:false 让
-      # .env 缺失时明确报错，而不是静默创建一个目录导致写入失败。
-      - type: bind
-        source: ./.env
-        target: /compose/.env
-        bind:
-          create_host_path: false
+      # compose 与 .env 必须挂**目录**，不能挂单个文件。
+      #
+      # 单文件 bind mount 绑定的是 inode：宿主用「写临时文件 + rename」改写文件
+      # （编辑器、cp、git checkout、安装脚本都这么做）之后，容器仍读旧 inode 的
+      # 冻结快照。2026-11-16 NAS 实测后果：边车读到 10-21 的旧 compose（仍指向已
+      # 退役的 ghcr.io/lianying1716/*），升级稳定报 `denied`，重建与回滚都指向不存在
+      # 的镜像，服务被停掉且回不来；/compose/.env 同样是旧快照，pin 会写进孤儿 inode。
+      #
+      # 挂目录后 compose 文件与 .env 始终是宿主当前内容；路径保持不变
+      # （/compose/docker-compose.yml、/compose/.env），与 UPDATER_COMPOSE_FILE /
+      # UPDATER_ENV_FILE 的默认值一致。
+      #
+      # 读写而非只读的原因：升级成功后要把 PLATFORM_VERSION 写回 .env（pin），
+      # 否则重启会按默认 tag 静默回退。只读挂载挡不住越权——边车持有 docker.sock，
+      # 本来就等价于宿主 root，ro 在这个前提下不构成真实边界。
+      - ./:/compose
       # 与 api/worker 共享 data 卷。备份只需要读，但自动回滚必须在旧镜像
       # 启动前恢复 data（封面/媒体/secret.key），因此边车需要对卷有写权限。
       - platform-data:/data

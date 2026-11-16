@@ -1,0 +1,7 @@
+analyze|error|1
+breakdown|error|1
+fetch_comments|done|70
+refresh_metrics|done|1
+sync|done|392
+transcribe|error|207
+understand_video|error|119

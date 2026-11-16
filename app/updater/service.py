@@ -47,6 +47,112 @@ def _compose(*args: str, env: dict | None = None, timeout: int = 600) -> subproc
     )
 
 
+def _compose_images(version: str, services: list[str] | None = None) -> list[str]:
+    """解析给定服务在目标版本下会用的镜像引用。
+
+    只取升级器真正会重建的那些服务——`config --images` 会把 db 等依赖也带出来，
+    而它们与升级无关。用于升级前自检：compose 内容与目标版本对不上时（典型症状是
+    边车读到过期快照，见 OPS-19），提前发现比事后对着 `denied` 猜要好。
+    """
+    targets = services or list(_UPGRADABLE_SERVICES)
+    r = _compose("config", "--format", "json", env=dict(os.environ, PLATFORM_VERSION=version))
+    if r.returncode != 0:
+        return []
+    import json
+
+    try:
+        config = json.loads(r.stdout or "{}")
+    except ValueError:
+        return []
+    out: list[str] = []
+    for name in targets:
+        image = str(((config.get("services") or {}).get(name) or {}).get("image") or "").strip()
+        if image and image not in out:
+            out.append(image)
+    return out
+
+
+def _image_exists_locally(ref: str) -> bool:
+    """本机是否已有该镜像引用（含 digest 已解析的本地副本）。"""
+    if not ref:
+        return False
+    r = subprocess.run(
+        ["docker", "image", "inspect", ref], capture_output=True, text=True, timeout=60, check=False
+    )
+    return r.returncode == 0
+
+
+def _repo_of(ref: str) -> str:
+    """去掉 tag/digest，只留 registry/repo，用于比对「是不是同一个仓库」。"""
+    ref = (ref or "").strip().split("@", 1)[0]
+    if not ref:
+        return ""
+    slash = ref.rfind("/")
+    colon = ref.rfind(":")
+    # 冒号在最后一个斜杠之前说明那是端口（registry:5000/repo），不是 tag 分隔符。
+    if colon > slash:
+        ref = ref[:colon]
+    return ref
+
+
+def _running_api_image() -> str:
+    """通过 compose 找到正在运行的 platform-api 容器，读它实际用的镜像引用。"""
+    ids = _compose("ps", "-q", "platform-api")
+    if ids.returncode != 0:
+        return ""
+    container = next((line.strip() for line in ids.stdout.splitlines() if line.strip()), "")
+    if not container:
+        return ""
+    r = subprocess.run(
+        ["docker", "inspect", "-f", "{{.Config.Image}}", container],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    return (r.stdout or "").strip() if r.returncode == 0 else ""
+
+
+def _stale_compose_hint(version: str) -> str:
+    """compose 解析出的仓库与「正在运行的容器」不一致时，给出可执行的诊断。
+
+    边车把 compose 以**单文件** bind mount 挂进来，宿主用「写临时文件 + rename」
+    改写后，容器仍读旧 inode——升级会拿着过期的 compose 去 pull/重建，表象是
+    `denied`（指向已退役仓库）或 `manifest unknown`（指向不存在的 tag）。
+    在动手前就比对「正在运行容器用的镜像仓库」与「compose 现在解析出的仓库」，
+    不一致就停下并给出明确修法，而不是让用户对着一句 daemon 错误猜。
+    """
+    refs = [ref for ref in _compose_images(version) if not ref.startswith("postgres:")]
+    if not refs:
+        return ""
+    running = _running_api_image()
+    if not running:
+        return ""
+    compose_repos = {_repo_of(ref) for ref in refs}
+    running_repo = _repo_of(running)
+    if running_repo and compose_repos and running_repo not in compose_repos:
+        return (
+            f"compose 解析出的镜像仓库（{', '.join(sorted(compose_repos))}）与正在运行的容器"
+            f"（{running}）不一致。这通常是边车读到过期 docker-compose.yml 造成的"
+            "（单文件 bind mount 在宿主 rename 后仍指向旧 inode）。"
+            "请执行 `docker compose --profile updater up -d --force-recreate platform-updater` "
+            "重启边车后重试。"
+        )
+    return ""
+
+
+def _pull_failure_is_fatal(r: subprocess.CompletedProcess, version: str) -> bool:
+    """判断一次 `compose pull` 失败是否真的没拿到可用镜像。
+
+    为什么不能只看退出码：`docker compose pull` 同时拉多个共享同一 image 的服务时，
+    会输出 `Skipped - Image is already being pulled by <other>`。真正的产品事故是
+    拉取真失败后仍去重建；判定标准必须是「目标镜像到底在不在本机」，而不是
+    compose 的退出码或某一行 stderr 长什么样。
+    """
+    refs = _compose_images(version)
+    if not refs:
+        # 连镜像名都解析不出来，属于 compose 自身不可用，按失败处理。
+        return True
+    return any(not _image_exists_locally(ref) for ref in refs)
+
+
 def _present_services() -> list[str]:
     """返回 compose 里实际定义的可升级服务（容忍某个服务缺失，避免整体失败）。"""
     r = _compose("config", "--services")
@@ -114,12 +220,30 @@ def _do_backup(version: str) -> dict:
 
 
 def _do_pull(version: str) -> dict:
+    """拉取目标镜像，判定标准是「镜像是否真的可用」，不是 compose 的退出码。
+
+    真实事故（2026-11-16 NAS v1.0.9→v1.0.11）：边车把 compose 文件以**单文件 bind
+    mount** 挂进来，宿主改写文件是「写临时文件 + rename」，容器看到的是旧 inode 的
+    冻结快照，里面仍写着已退役的 `ghcr.io/lianying1716/*`。于是 pull 稳定报
+    `denied`、随后重建也指向不存在的镜像。两件事都得拦：
+    1. compose 解析出的镜像与目标版本自相矛盾时，直接给出可诊断错误，别去动容器；
+    2. compose 因多服务共享镜像而 `Skipped` 时，只要镜像已在本机就必须算成功。
+    """
     env = dict(os.environ, PLATFORM_VERSION=version)
     services = _present_services()
     if not services:
         return {"ok": False, "error": "未在 compose 中找到可升级服务"}
     r = _compose("pull", *services, env=env)
-    return {"ok": r.returncode == 0, "error": r.stderr[-300:]}
+    if _pull_failure_is_fatal(r, version):
+        detail = (r.stderr or r.stdout or "")[-300:].strip() or f"退出码 {r.returncode}"
+        # 拉取失败时才追加「是不是读到了过期 compose」的诊断。
+        # 不能反过来在 pull 之前就拦：用户主动把镜像仓库从 A 迁到 B 是合法操作，
+        # 那种情况下配置本来就与运行中的容器不同，提前拦会把正常迁移误判成故障。
+        stale = _stale_compose_hint(version)
+        if stale:
+            return {"ok": False, "error": f"{detail}；{stale}"}
+        return {"ok": False, "error": detail}
+    return {"ok": True}
 
 
 def _do_recreate(version: str) -> dict:
@@ -127,6 +251,11 @@ def _do_recreate(version: str) -> dict:
     services = _present_services()
     if not services:
         return {"ok": False, "error": "未在 compose 中找到可升级服务"}
+    # 拉起前再确认一次镜像真的在本机：`up` 在这里会顺手 pull，如果 compose 指向的是
+    # 错仓库，它会把「重建」变成「停掉旧容器并报错」，等于把可用服务换成不可用。
+    missing = [ref for ref in _compose_images(version) if not _image_exists_locally(ref)]
+    if missing:
+        return {"ok": False, "error": f"目标镜像不在本机：{', '.join(missing)}，已保持现有容器不动"}
     r = _compose("up", "-d", "--no-deps", *services, env=env)
     return {"ok": r.returncode == 0, "error": r.stderr[-300:]}
 
@@ -150,7 +279,7 @@ def _prepare_rollback(version: str) -> dict:
     if r.returncode == 0:
         return {"ok": True}
     pull = _compose("pull", *services, env=env)
-    if pull.returncode != 0:
+    if _pull_failure_is_fatal(pull, version):
         return {"ok": False, "error": f"create 失败({r.stderr[-150:]})，拉取也失败({pull.stderr[-150:]})"}
     r = _compose("create", "--pull=never", "--force-recreate", "--no-deps", *services, env=env)
     return {"ok": r.returncode == 0, "error": r.stderr[-200:]}
@@ -222,13 +351,20 @@ def _do_rollback(version: str, *, api_only: bool = False) -> dict:
             services = ["platform-api"]
         # Do not stop the old API before its replacement is available.  A
         # missing image would otherwise turn a partial rollback into an outage.
-    up = _compose("up", "-d", "--no-deps", *services, env=env)
-    if up.returncode != 0:
-        # 本地没有旧镜像时才需要拉取；拉取失败再如实报错。
+    # 先确认旧镜像真在本机：`up` 在镜像缺失时会顺手去拉，一旦拉取失败（错仓库、
+    # 网络抖动），它会先把现有容器停掉再报错，把「本来还能跑的服务」变成全站不可用。
+    missing = [ref for ref in _compose_images(version, services) if not _image_exists_locally(ref)]
+    if missing:
         pull = _compose("pull", *services, env=env)
-        if pull.returncode != 0:
-            return {"ok": False, "error": f"回滚失败：up 失败({up.stderr[-150:]})，拉取也失败({pull.stderr[-150:]})"}
-        up = _compose("up", "-d", "--no-deps", *services, env=env)
+        if _pull_failure_is_fatal(pull, version):
+            return {
+                "ok": False,
+                "error": (
+                    f"回滚目标镜像不在本机（{', '.join(missing)}），拉取也失败"
+                    f"（{pull.stderr[-150:]}）；现有容器未改动"
+                ),
+            }
+    up = _compose("up", "-d", "--no-deps", *services, env=env)
     return {"ok": up.returncode == 0, "error": up.stderr[-200:]}
 
 

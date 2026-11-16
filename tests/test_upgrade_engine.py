@@ -72,22 +72,40 @@ def test_backup_failure_aborts_before_touching_images():
 
 
 def test_unhealthy_after_upgrade_triggers_rollback():
-    """新版本健康校验失败：自动回滚到旧版本，终态 rolled_back。"""
+    """新版本健康校验失败：自动回滚到**升级前**版本，终态 rolled_back。
+
+    回滚目标必须是 from_version，不能是刚失败的目标版本。
+    """
     rec = _Recorder(health_ok=False)
     e = _engine(rec)
-    job = e.run_sync("v1.2.0")
-    assert ("rollback", "v1.2.0") in rec.calls
+    job = e.run_sync("v1.2.0", from_version="v1.1.0")
+    assert ("rollback", "v1.1.0") in rec.calls
+    assert ("rollback", "v1.2.0") not in rec.calls
     assert job.status == "rolled_back"
     assert rec.calls[-1][0] == "rollback"
 
 
 def test_pull_failure_triggers_rollback():
-    """拉取失败也要回滚（此时已备份，确保回到可用状态）。"""
+    """拉取失败也要回滚（此时已备份，确保回到升级前状态）。"""
     rec = _Recorder(pull_ok=False)
     e = _engine(rec)
-    job = e.run_sync("v1.2.0")
+    job = e.run_sync("v1.2.0", from_version="v1.1.0")
     assert job.status in ("rolled_back", "failed")
-    assert ("rollback", "v1.2.0") in rec.calls
+    assert ("rollback", "v1.1.0") in rec.calls
+
+
+def test_rollback_refuses_when_previous_version_unknown():
+    """升级前版本未知时不得拿目标版本兜底回滚。
+
+    2026-11-16 NAS 事故：回滚目标在 GHCR 根本不存在（404），回滚必然失败，
+    还会先把容器停掉。未知就明确停下并要求人工处理，别假装能自愈。
+    """
+    rec = _Recorder(health_ok=False)
+    e = _engine(rec)
+    job = e.run_sync("v1.2.0")  # from_version 为空
+    assert job.status == "failed"
+    assert "无法确定升级前版本" in job.error
+    assert all(c[0] != "rollback" for c in rec.calls), "不得对未知版本执行回滚"
 
 
 def test_only_one_upgrade_at_a_time():

@@ -281,6 +281,18 @@ class UpgradeEngine:
             self._step(job, "rollback", "error", job.error)
             return
         self._step(job, "rollback", "running", "自动回滚到旧版本")
+        # 回滚目标必须是「升级前真实在跑」的版本。from_version 未知时绝不能拿
+        # job.version 兜底——那正是刚刚失败的升级目标，回滚过去等于原地打转，
+        # 而且旧镜像本来就不可用（2026-11-16 NAS 事故里回滚目标在 GHCR 就是 404）。
+        target = (job.from_version or "").strip()
+        if not target:
+            job.status = "failed"
+            job.error = (
+                f"{message}；无法确定升级前版本（主 API 版本探测失败），已阻止自动回滚。"
+                f"备份在 {job.backup_path or '（无）'}，请人工确认旧版本后恢复。"
+            )
+            self._step(job, "rollback", "error", job.error)
+            return
         will_restore = restore_db and self._restore is not None
         # New containers may still be writing the data volume.  Before the
         # restore swaps /data, stop the upgraded services; the rollback step
@@ -292,7 +304,7 @@ class UpgradeEngine:
                 job.error = f"{message}；无备份可恢复，已阻止自动回滚，请人工处理"
                 self._step(job, "rollback", "error", job.error)
                 return
-            prepared = self._prepare_rollback(job.from_version or job.version)
+            prepared = self._prepare_rollback(target)
             if not prepared.get("ok"):
                 job.status = "failed"
                 job.error = f"{message}；旧镜像不可用，未停止服务、未改动备份：{prepared.get('error') or prepared}"
@@ -341,9 +353,7 @@ class UpgradeEngine:
         # the old image.  A partial restore brings back only the API so the
         # worker cannot write into an incompletely restored data volume.
         rb = (
-            self._rollback(job.from_version or job.version, api_only=True)
-            if partial
-            else self._rollback(job.from_version or job.version)
+            self._rollback(target, api_only=True) if partial else self._rollback(target)
         )
         if rb.get("ok"):
             if will_restore and not job.data_restored:

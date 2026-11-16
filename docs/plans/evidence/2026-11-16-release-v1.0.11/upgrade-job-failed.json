@@ -1,0 +1,47 @@
+{
+ "version": "v1.0.11",
+ "from_version": "v1.0.7",
+ "status": "failed",
+ "error": "拉取镜像失败： platform-worker Skipped - Image is already being pulled by platform-api \n platform-api Pulling \n platform-api Error denied\nError response from daemon: denied\n；回滚也失败：回滚失败：up 失败(-platform-api-1  Waiting\n Container platform-api-platform-api-1  Error\ndependency failed to start: container platform-api-platform-api-1 is unhealthy\n)，拉取也失败(-worker Skipped - Image is already being pulled by platform-api \n platform-api Pulling \n platform-api Error denied\nError response from daemon: denied\n)，请用备份手动恢复",
+ "backup_path": "/backups/backup-v1.0.11-20261116T040248Z.tar.gz",
+ "started_at": "2026-11-16T04:02:48.678751+00:00",
+ "finished_at": "2026-11-16T04:06:26.646109+00:00",
+ "steps": [
+  {
+   "step": "backup",
+   "status": "running",
+   "detail": "开始备份数据库与 data 卷",
+   "at": "2026-11-16T04:02:48.679527+00:00"
+  },
+  {
+   "step": "backup",
+   "status": "ok",
+   "detail": "/backups/backup-v1.0.11-20261116T040248Z.tar.gz",
+   "at": "2026-11-16T04:05:44.803995+00:00"
+  },
+  {
+   "step": "pull",
+   "status": "running",
+   "detail": "拉取 v1.0.11",
+   "at": "2026-11-16T04:05:44.804014+00:00"
+  },
+  {
+   "step": "pull",
+   "status": "error",
+   "detail": "拉取镜像失败： platform-worker Skipped - Image is already being pulled by platform-api \n platform-api Pulling \n platform-api Error denied\nError response from daemon: denied\n",
+   "at": "2026-11-16T04:05:49.390732+00:00"
+  },
+  {
+   "step": "rollback",
+   "status": "running",
+   "detail": "自动回滚到旧版本",
+   "at": "2026-11-16T04:05:49.391021+00:00"
+  },
+  {
+   "step": "rollback",
+   "status": "error",
+   "detail": "拉取镜像失败： platform-worker Skipped - Image is already being pulled by platform-api \n platform-api Pulling \n platform-api Error denied\nError response from daemon: denied\n；回滚也失败：回滚失败：up 失败(-platform-api-1  Waiting\n Container platform-api-platform-api-1  Error\ndependency failed to start: container platform-api-platform-api-1 is unhealthy\n)，拉取也失败(-worker Skipped - Image is already being pulled by platform-api \n platform-api Pulling \n platform-api Error denied\nError response from daemon: denied\n)，请用备份手动恢复",
+   "at": "2026-11-16T04:06:26.644053+00:00"
+  }
+ ]
+}

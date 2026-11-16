@@ -1,0 +1,9 @@
+media_asset|9266
+content_item|9370
+transcript|7148
+viral_breakdown|7123
+platform_account|2
+sync_run|392
+0031
+--- ai config ---
+2|0|0
