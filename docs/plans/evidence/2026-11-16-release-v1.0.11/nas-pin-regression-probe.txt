@@ -1,0 +1,56 @@
+# OPS-21 在 NAS 生产上仍会触发的实测探针（零风险：临时目录，非部署目录）
+
+日期：2026-11-16
+对象：GHCR 上真实的已发布边车镜像 ghcr.io/ly1713/platform-api-updater:v1.0.11
+目的：确认已发布的 v1.0.11 边车是否包含 OPS-21 的属主修复。
+
+## 1. 已发布镜像内是否含修复
+
+$ docker run --rm --entrypoint sh ghcr.io/ly1713/platform-api-updater:v1.0.11 \
+    -c 'grep -c keep_owner /srv/app/updater/versionstate.py'
+0
+
+即：v1.0.11 边车镜像里的 versionstate.py 是修复前版本。
+原因：修复提交 839bf6f 在 v1.0.11 tag（68dcb9a）之后，未被任何已发布镜像包含。
+
+## 2. 按 NAS 当前真实挂载方式执行 pin（复现）
+
+NAS 上边车实际挂载：
+  bind /vol1/1000/docker/platform-api/src -> /compose rw=true
+  User= (空 = root)
+
+探针（临时目录 /tmp/ops21-probe，模拟生产 .env 属主/权限，跑完即删）：
+
+$ printf "PLATFORM_VERSION=v1.0.11\nPLATFORM_PORT=9100\n" > /tmp/ops21-probe/.env
+$ chown 1000:1001 /tmp/ops21-probe/.env; chmod 755 /tmp/ops21-probe/.env
+$ docker run --rm -v /tmp/ops21-probe:/compose --entrypoint python \
+    ghcr.io/ly1713/platform-api-updater:v1.0.11 \
+    -c 'from app.updater import versionstate; versionstate.write_pinned_version("/compose/.env", "v1.0.12"); print("pin done")'
+pin done
+
+写入前  owner=ztb:Users uid=1000 gid=1001 mode=755
+写入后  owner=root:root uid=0 gid=0 mode=600
+内容：  cat: /tmp/ops21-probe/.env: Permission denied   （宿主用户 ztb 读取失败）
+
+## 结论
+
+当前 NAS 生产实例（v1.0.11）上，任何一次网页一键升级走到 pin 步骤，
+都会把 /vol1/1000/docker/platform-api/src/.env 变成 root:root / 600，
+此后宿主用户（ztb, uid=1000）的 docker compose 操作全部 permission denied。
+
+修复已存在于代码（839bf6f），但必须随下一个版本发布才能在生产生效。
+
+## 3. 同批未发布的修复
+
+$ docker run --rm --entrypoint sh ghcr.io/ly1713/platform-api-updater:v1.0.11 -c '
+    for m in _compose_images _image_exists_locally _pull_failure_is_fatal _stale_compose_hint; do
+      printf "%-26s " $m; grep -c "def $m" /srv/app/updater/service.py; done'
+_compose_images            0
+_image_exists_locally      0
+_pull_failure_is_fatal     0
+_stale_compose_hint        0
+
+即 OPS-19 的代码硬化（以及同提交的 OPS-20 回滚修复）同样未进入已发布镜像。
+现有 v1.0.11 tag 之后的提交：
+  02e1fcd fix(updater): 边车改挂目录并让拉取/重建/回滚只在镜像可用时动手 (OPS-19, OPS-20)
+  839bf6f fix(updater): pin 保留 .env 属主权限，边车 tag 与主版本号解耦
