@@ -35,6 +35,14 @@ jobs:
       - uses: astral-sh/setup-uv@v5
         with:
           python-version: "3.12"
+      # tests/test_transcription_decode.py shells out to real ffmpeg to check the
+      # 16 kHz mono float32 decode path.  Without this the module imports fine
+      # but two of its tests fail with FileNotFoundError — and since these tests
+      # never ran before (they were blocked by a missing numpy import), that
+      # failure only shows up now.  Install it rather than skipping: this is the
+      # regression guard for a bug that once broke *all* transcription.
+      - name: 安装 ffmpeg（转录解码测试需要真实 ffmpeg）
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
       - name: 安装依赖
         run: uv sync --extra postgres --extra dev
       - name: 确认 PostgreSQL 就绪（防止迁移测试静默 skip）
