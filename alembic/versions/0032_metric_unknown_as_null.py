@@ -18,26 +18,28 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def upgrade() -> None:
-    for column in ("play", "like", "comment", "favorite", "share"):
-        op.alter_column(
-            "content_metric_snapshot",
-            column,
-            existing_type=sa.BigInteger(),
-            nullable=True,
-            existing_nullable=False,
-        )
+    # SQLite cannot ALTER COLUMN; batch mode rebuilds the table so local
+    # installs and tests can migrate without a PostgreSQL-only SQL path.
+    with op.batch_alter_table("content_metric_snapshot") as batch:
+        for column in ("play", "like", "comment", "favorite", "share"):
+            batch.alter_column(
+                column,
+                existing_type=sa.BigInteger(),
+                nullable=True,
+                existing_nullable=False,
+            )
 
 
 def downgrade() -> None:
-    for column in ("play", "like", "comment", "favorite", "share"):
-        # ``like`` is a PostgreSQL keyword; quote every identifier rather than
-        # relying on the current database's lowercase parser.
-        quoted = f'"{column}"'
-        op.execute(f"UPDATE content_metric_snapshot SET {quoted} = 0 WHERE {quoted} IS NULL")
-        op.alter_column(
-            "content_metric_snapshot",
-            column,
-            existing_type=sa.BigInteger(),
-            nullable=False,
-            existing_nullable=True,
-        )
+    with op.batch_alter_table("content_metric_snapshot") as batch:
+        for column in ("play", "like", "comment", "favorite", "share"):
+            # ``like`` is a PostgreSQL keyword; quote every identifier rather
+            # than relying on the current database's lowercase parser.
+            quoted = f'"{column}"'
+            op.execute(f"UPDATE content_metric_snapshot SET {quoted} = 0 WHERE {quoted} IS NULL")
+            batch.alter_column(
+                column,
+                existing_type=sa.BigInteger(),
+                nullable=False,
+                existing_nullable=True,
+            )
