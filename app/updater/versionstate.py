@@ -67,17 +67,39 @@ def write_pinned_version(env_path: str | Path, version: str) -> None:
 
     path.parent.mkdir(parents=True, exist_ok=True)
 
+    # 原文件属主/权限要跟着走。边车以 root 运行，而 .env 是宿主用户的文件；
+    # 走 rename 路径写出的是全新 inode，属主/权限取的是进程默认（root:600），
+    # 升级后宿主用户就读不了自己的 .env 了——2026-11-16 本机 E2E 实测踩到
+    # `-rw------- root root`，随后 `docker compose` 直接 `permission denied`。
+    try:
+        owned = path.stat()
+        keep_owner = (owned.st_uid, owned.st_gid)
+        keep_mode = owned.st_mode & 0o777
+    except FileNotFoundError:
+        keep_owner = None
+        keep_mode = None
+
     # 首选原子替换：同目录临时文件写入后 rename，避免中途崩溃留下半截 .env。
-    # 但 `.env` 在 compose 里是**单文件 bind mount**（宿主文件挂成容器内文件），
-    # rename 跨不过这个挂载点：内核/文件系统会返回 EBUSY（ZFS 上实测
-    # `Device or resource busy: '/compose/.env.xxxx.tmp' -> '/compose/.env'`）。
-    # 这种情况下退回「原地截断 + 写入」——目标就是那个挂载点本身，直接写即可。
+    # 边车现在把部署目录整体挂进来（`./:/compose`，见 OPS-19），rename 可以正常工作。
+    # 仍保留 EBUSY 兜底：把 `.env` 单独以**单文件** bind mount 挂进容器时（老版
+    # compose、以及用户自己改过的部署），rename 跨不过挂载点，ZFS 上实测
+    # `Device or resource busy: '/compose/.env.xxxx.tmp' -> '/compose/.env'`。
+    # 那种情况下退回「原地截断 + 写入」——目标就是那个挂载点本身，直接写即可。
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".env.", suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(content)
             fh.flush()
             os.fsync(fh.fileno())
+        if keep_owner is not None:
+            try:
+                os.chown(tmp, *keep_owner)
+            except OSError:
+                # 非 root（源码安装）改不了属主也无所谓：那时写的本来就是自己的文件。
+                pass
+        if keep_mode is not None:
+            # mkstemp 一律 0600；原文件可能更宽松（宿主用户要能读），要还原。
+            os.chmod(tmp, keep_mode)
         try:
             os.replace(tmp, path)
             return

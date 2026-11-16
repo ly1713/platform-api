@@ -1,0 +1,79 @@
+{
+    "busy": false,
+    "job": {
+        "version": "v1.0.11",
+        "from_version": "v1.0.10",
+        "status": "success",
+        "error": "",
+        "backup_path": "/backups/backup-v1.0.11-20261116T054608Z.tar.gz",
+        "reversible": true,
+        "expected_commit": "68dcb9a0d36063f26cfd1361f92d675b6e18e0d8",
+        "commit_verified": true,
+        "db_restored": false,
+        "data_restored": false,
+        "started_at": "2026-11-16T05:46:08.684952+00:00",
+        "finished_at": "2026-11-16T05:46:30.212902+00:00",
+        "steps": [
+            {
+                "step": "backup",
+                "status": "running",
+                "detail": "\u5f00\u59cb\u5907\u4efd\u6570\u636e\u5e93\u4e0e data \u5377",
+                "at": "2026-11-16T05:46:08.685254+00:00"
+            },
+            {
+                "step": "backup",
+                "status": "ok",
+                "detail": "/backups/backup-v1.0.11-20261116T054608Z.tar.gz",
+                "at": "2026-11-16T05:46:08.960921+00:00"
+            },
+            {
+                "step": "pull",
+                "status": "running",
+                "detail": "\u62c9\u53d6 v1.0.11",
+                "at": "2026-11-16T05:46:08.960934+00:00"
+            },
+            {
+                "step": "pull",
+                "status": "ok",
+                "detail": "",
+                "at": "2026-11-16T05:46:13.161693+00:00"
+            },
+            {
+                "step": "recreate",
+                "status": "running",
+                "detail": "\u91cd\u5efa platform-api / platform-worker",
+                "at": "2026-11-16T05:46:13.161708+00:00"
+            },
+            {
+                "step": "recreate",
+                "status": "ok",
+                "detail": "",
+                "at": "2026-11-16T05:46:24.201997+00:00"
+            },
+            {
+                "step": "verify",
+                "status": "running",
+                "detail": "\u5065\u5eb7\u6821\u9a8c\u65b0\u7248\u672c",
+                "at": "2026-11-16T05:46:24.202021+00:00"
+            },
+            {
+                "step": "verify",
+                "status": "ok",
+                "detail": "",
+                "at": "2026-11-16T05:46:30.209013+00:00"
+            },
+            {
+                "step": "pin",
+                "status": "running",
+                "detail": "\u8bb0\u5f55\u5f53\u524d\u7248\u672c\u5230 .env",
+                "at": "2026-11-16T05:46:30.209025+00:00"
+            },
+            {
+                "step": "pin",
+                "status": "ok",
+                "detail": "",
+                "at": "2026-11-16T05:46:30.212795+00:00"
+            }
+        ]
+    }
+}

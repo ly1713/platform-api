@@ -226,12 +226,45 @@ docker exec -e PLATFORM_VERSION=v1.0.11 ... docker compose -f /compose/docker-co
   在目标镜像不在本机时不执行 `compose up`，改为明确回报「现有容器未改动」。仍未做：
   回滚前的**迁移可回退性**校验——v1.0.7 的迁移链停在 `0022`，而事故时 DB 已在
   `0034`，即使镜像拉到也会被版本守卫拒绝启动。这一点已记入 OPS-20 的已知边界。
-- **未在修复后重跑一次真实 UI 一键升级**：本轮修复的验证是「同一命令在边车容器内
-  3/3 成功」＋单元回归，不是端到端再点一次按钮。该端到端复验留待下轮（需要再准备
-  一个可升级的相邻版本，且要接受一次真实停服风险）。
-- **边车镜像 tag 仍随 `PLATFORM_VERSION` 走**：`.env` 没有固定
-  `PLATFORM_UPDATER_IMAGE` 的版本，因此边车镜像版本始终等于主版本号。CI 每次发版
-  都会同时推两个镜像，所以正常路径没问题；但若某版本只推了主镜像，边车就会
-  `manifest unknown`（本轮已实测复现 `platform-updater Error manifest unknown`）。
-  未修。
+- **修复后已重跑真实 UI 一键升级（成功）**：在本机起了一次性 E2E 栈
+  （`e2e-upgrade/`，真实 Docker / 真实浏览器 / 真实点击，不是 stub），从 `v1.0.10`
+  点「升级到 v1.0.11」全流程成功：
+  `backup ok → pull ok → recreate ok → verify ok → pin ok`，终态 `success`，
+  `commit_verified=true`，DB `0032 → 0034`、`db_in_sync=true`
+  （`e2e-upgrade/upgrade-job-success.json`、截图 `01`–`05`）。
+  这轮 E2E 又抓出两个修复自身引入的缺陷，并已一并修掉：
+  1. **pin 把 `.env` 换成 root:600**：目录挂载后 rename 生效，新 inode 的属主/权限
+     取进程默认（边车以 root 运行），宿主用户随后 `docker compose` 直接
+     `permission denied`。现在写入前记录原属主与权限，临时文件 chown/chmod 后再
+     rename；`test_write_keeps_owner_and_mode_of_existing_env` 锁住。
+  2. **边车 tag 只能等于主版本号**（见下条）。
+- **属主修复后又整轮重跑了一次（二次 E2E，`e2e-upgrade/rerun-after-pin-fix/`）**：
+  用带修复的镜像（主镜像 `platform-api:candidate-ops19b`、边车
+  `platform-api-updater:candidate-ops19b`）重新起同一套栈，从 `.env` 干净状态
+  （`PLATFORM_VERSION=v1.0.10`，`-rw-r--r-- ztb:ztb`）再点一次真实按钮，结果
+  `passed: true`、`v1.0.10 → v1.0.11`、`commit_verified=true`、
+  DB `0032 → 0034`、`db_in_sync=true`、`apiErrors=[]`、`pageErrors=[]`，
+  页面读回「升级成功 / 提交已核验 / 升级成功，服务已更新」（截图 `01`–`06`，
+  机器结果 `result.json`、任务体 `upgrade-job-success.json`）。
+  **关键回归项**：pin 之后宿主侧 `.env` 仍是 `owner=ztb:ztb mode=644`
+  （`env-ownership-after-pin.txt` 里带 inode 的 `stat` 输出，内容已写成
+  `PLATFORM_VERSION=v1.0.11`），不再是事故里的 `root root / 600`——属主修复
+  端到端成立，之后宿主用户 `docker compose` 可以正常读取。
+  首次跑这股重跑时驱动脚本自己还有个 bug（用 `count()` 判断登录态，撞上设置页
+  里**隐藏**的密码输入框，`page.fill` 卡到超时），已改为按可见性判断；
+  第一次跑的 `99-error.png` 一并留在目录里作为过程记录。
+  仍未在 **NAS 生产实例**上重跑一次完整的 UI 一键升级——NAS 当前已是 v1.0.11，
+  没有更高的 Release 可升；要复验得先降级再升，会真的停服一次，留待用户确认。
+- **边车镜像 tag 与主版本号解耦（已修）**：原先 `image` 直接拼
+  `${PLATFORM_UPDATER_IMAGE}:${PLATFORM_VERSION}`，边车 tag 只能等于主版本号。
+  本轮实测复现了它的后果：把 `PLATFORM_VERSION` 置为 `v1.0.9` 时，
+  `docker compose --profile updater up -d platform-updater` 直接
+  `platform-updater Error manifest unknown`（GHCR 只有 `platform-api-updater:v1.0.11`
+  与 `v1.0`/`v1`/`latest`）。而边车按设计**不随升级重建**，跟主版本号本来就没有必须
+  一致的约束。修复：tag 改为 `${PLATFORM_UPDATER_VERSION:-${PLATFORM_VERSION:-latest}}`，
+  新增可选变量单独钉住；`.env.example` 写了用途与生效方式（改完要重建边车）。
+  NAS 的 `.env` 已加 `PLATFORM_UPDATER_VERSION=v1.0.11`，`PLATFORM_VERSION=v1.0.9`
+  时 `compose config` 解析为 `platform-api-updater:v1.0.11`、主服务仍为 `v1.0.9`
+  （只读复验的原始输出见 `ops22-nas-updater-tag.txt`，含不覆盖主版本时的对照与
+  当前边车容器实际镜像）。
 

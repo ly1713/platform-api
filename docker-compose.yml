@@ -119,7 +119,14 @@ services:
   # 不需要网页一键升级时，可整段删除或用 profiles 排除。
   platform-updater:
     # 边车用专用镜像（主镜像 + docker CLI + compose 插件）；主镜像不含 docker 客户端。
-    image: ${PLATFORM_UPDATER_IMAGE:-ghcr.io/ly1713/platform-api-updater}:${PLATFORM_VERSION:-latest}
+    #
+    # tag 默认跟随 PLATFORM_VERSION，但可以用 PLATFORM_UPDATER_VERSION 单独钉住。
+    # 原因：边车按设计**不随升级重建**，它跟主版本号并没有必须一致的约束；而当
+    # PLATFORM_VERSION 指向一个只推了主镜像、没推边车镜像的版本时（老版本回溯钉版、
+    # 迁移镜像命名空间都会这样），跟随默认值会让边车直接 `manifest unknown` 起不来，
+    # 一键升级入口随之消失。2026-11-16 NAS 实测踩过：PLATFORM_VERSION=v1.0.9，
+    # 而 GHCR 只有 platform-api-updater:v1.0.11（及 v1.0/v1/latest），启动边车即报错。
+    image: ${PLATFORM_UPDATER_IMAGE:-ghcr.io/ly1713/platform-api-updater}:${PLATFORM_UPDATER_VERSION:-${PLATFORM_VERSION:-latest}}
     environment:
       PLATFORM_UPDATER_TOKEN: ${PLATFORM_UPDATER_TOKEN:-}
       UPDATER_COMPOSE_FILE: /compose/docker-compose.yml

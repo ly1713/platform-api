@@ -19,7 +19,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _compose_config(extra_env: dict[str, str]) -> dict:
+def _compose_config(extra_env: dict[str, str], *, profiles: bool = False) -> dict:
     if shutil.which("docker") is None:
         pytest.skip("docker CLI is not installed")
     env = os.environ.copy()
@@ -27,8 +27,12 @@ def _compose_config(extra_env: dict[str, str]) -> dict:
         if key.startswith("PLATFORM_") or key == "COMPOSE_PROJECT_NAME":
             env.pop(key, None)
     env.update(extra_env)
+    args = ["docker", "compose"]
+    if profiles:
+        args += ["--profile", "updater"]
+    args += ["config", "--format", "json"]
     result = subprocess.run(
-        ["docker", "compose", "config", "--format", "json"],
+        args,
         cwd=ROOT,
         env=env,
         capture_output=True,
@@ -37,6 +41,26 @@ def _compose_config(extra_env: dict[str, str]) -> dict:
     )
     assert result.returncode == 0, result.stderr
     return json.loads(result.stdout)
+
+
+def test_updater_image_tag_can_be_pinned_apart_from_platform_version():
+    """边车镜像 tag 必须能独立于 PLATFORM_VERSION 钉住。
+
+    边车按设计不随升级重建，和主版本号没有必须一致的约束；一旦目标版本没有配套
+    的边车镜像（回溯钉版、镜像命名空间迁移），跟随默认值会让边车 `manifest
+    unknown` 起不来，一键升级入口直接消失。
+    """
+    followed = _compose_config({"PLATFORM_VERSION": "v1.0.9"}, profiles=True)
+    assert followed["services"]["platform-updater"]["image"].endswith(":v1.0.9")
+
+    pinned = _compose_config(
+        {"PLATFORM_VERSION": "v1.0.9", "PLATFORM_UPDATER_VERSION": "v1.0.11"},
+        profiles=True,
+    )
+    updater_image = pinned["services"]["platform-updater"]["image"]
+    assert updater_image.endswith(":v1.0.11"), updater_image
+    # 主服务仍然跟随 PLATFORM_VERSION——钉边车不能顺手改主服务。
+    assert pinned["services"]["platform-api"]["image"].endswith(":v1.0.9")
 
 
 def test_compose_passes_deployment_overrides_to_api_and_worker():

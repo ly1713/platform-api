@@ -64,6 +64,28 @@ def test_rejects_invalid_version_on_write(tmp_path):
         versionstate.write_pinned_version(env, "v1.0.0; rm -rf /")
 
 
+def test_write_keeps_owner_and_mode_of_existing_env(tmp_path):
+    """pin 不能把宿主用户的 .env 换成 root:600。
+
+    回归背景：边车以 root 运行，目录挂载后 pin 走「临时文件 + rename」，新 inode
+    的属主/权限取进程默认。2026-11-16 本机 E2E 实测升级成功后 `.env` 变成
+    `-rw------- root root`，宿主用户与 `docker compose` 随即 `permission denied`。
+    """
+    import os as _os
+
+    env = tmp_path / ".env"
+    env.write_text("PLATFORM_VERSION=v1.0.0\nPLATFORM_PORT=9100\n", encoding="utf-8")
+    _os.chmod(env, 0o644)
+    before = env.stat()
+
+    versionstate.write_pinned_version(env, "v1.0.1")
+
+    after = env.stat()
+    assert versionstate.read_pinned_version(env) == "v1.0.1"
+    assert (after.st_uid, after.st_gid) == (before.st_uid, before.st_gid)
+    assert after.st_mode & 0o777 == 0o644
+
+
 def test_write_falls_back_when_target_is_bind_mount(tmp_path, monkeypatch):
     """`.env` 是单文件 bind mount 时 rename 会 EBUSY，必须退回原地写。
 

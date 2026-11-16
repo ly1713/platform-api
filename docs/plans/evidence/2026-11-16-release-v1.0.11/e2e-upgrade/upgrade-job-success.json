@@ -1,0 +1,79 @@
+{
+ "busy": false,
+ "job": {
+  "version": "v1.0.11",
+  "from_version": "v1.0.10",
+  "status": "success",
+  "error": "",
+  "backup_path": "/backups/backup-v1.0.11-20261116T051851Z.tar.gz",
+  "reversible": true,
+  "expected_commit": "68dcb9a0d36063f26cfd1361f92d675b6e18e0d8",
+  "commit_verified": true,
+  "db_restored": false,
+  "data_restored": false,
+  "started_at": "2026-11-16T05:18:51.159975+00:00",
+  "finished_at": "2026-11-16T05:19:58.745101+00:00",
+  "steps": [
+   {
+    "step": "backup",
+    "status": "running",
+    "detail": "开始备份数据库与 data 卷",
+    "at": "2026-11-16T05:18:51.160257+00:00"
+   },
+   {
+    "step": "backup",
+    "status": "ok",
+    "detail": "/backups/backup-v1.0.11-20261116T051851Z.tar.gz",
+    "at": "2026-11-16T05:18:51.599853+00:00"
+   },
+   {
+    "step": "pull",
+    "status": "running",
+    "detail": "拉取 v1.0.11",
+    "at": "2026-11-16T05:18:51.599869+00:00"
+   },
+   {
+    "step": "pull",
+    "status": "ok",
+    "detail": "",
+    "at": "2026-11-16T05:19:39.246384+00:00"
+   },
+   {
+    "step": "recreate",
+    "status": "running",
+    "detail": "重建 platform-api / platform-worker",
+    "at": "2026-11-16T05:19:39.246399+00:00"
+   },
+   {
+    "step": "recreate",
+    "status": "ok",
+    "detail": "",
+    "at": "2026-11-16T05:19:52.734234+00:00"
+   },
+   {
+    "step": "verify",
+    "status": "running",
+    "detail": "健康校验新版本",
+    "at": "2026-11-16T05:19:52.734246+00:00"
+   },
+   {
+    "step": "verify",
+    "status": "ok",
+    "detail": "",
+    "at": "2026-11-16T05:19:58.741157+00:00"
+   },
+   {
+    "step": "pin",
+    "status": "running",
+    "detail": "记录当前版本到 .env",
+    "at": "2026-11-16T05:19:58.741175+00:00"
+   },
+   {
+    "step": "pin",
+    "status": "ok",
+    "detail": "",
+    "at": "2026-11-16T05:19:58.744979+00:00"
+   }
+  ]
+ }
+}

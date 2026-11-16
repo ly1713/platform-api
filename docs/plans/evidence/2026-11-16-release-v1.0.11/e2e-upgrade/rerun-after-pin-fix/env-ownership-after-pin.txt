@@ -1,0 +1,7 @@
+PLATFORM_VERSION=v1.0.11 / PLATFORM_UPDATER_VERSION=v1.0.10 升级后 .env 实况：
+/tmp/e2e-ops19/.env  inode=11184075  owner=ztb:ztb  mode=644  size=58
+内容：
+PLATFORM_VERSION=v1.0.11
+PLATFORM_UPDATER_VERSION=v1.0.10
+--- /api/system/version ---
+{"app_version":"v1.0.11","git_commit":"68dcb9a0d36063f26cfd1361f92d675b6e18e0d8","build_time":"2026-11-16T03:40:26Z","version_source":"release_image","db_revision":"0034","db_head":"0034","db_in_sync":true}

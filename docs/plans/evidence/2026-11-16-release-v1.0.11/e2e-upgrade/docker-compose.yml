@@ -1,0 +1,98 @@
+# 一次性 E2E 栈：验证「修复后的一键升级」能真正跑通。
+#
+# 与 NAS 的差别只有两点，都不影响被验证的行为：
+#   1. 端口 9399，避免撞本机开发实例；
+#   2. 初始版本用 v1.0.10（GHCR 上并没有发布过这个 tag，本地是从真实
+#      v1.0.10 构建 retag 出来的），这样「检查更新」会发现更新、按钮可用，
+#      升级目标是 GHCR 上真实存在的 v1.0.11。
+name: xsai-e2e19
+
+services:
+  platform-api:
+    image: ghcr.io/ly1713/platform-api:${PLATFORM_VERSION}
+    ports:
+      - "9399:9100"
+    environment:
+      PLATFORM_DB_HOST: db
+      PLATFORM_DB_PORT: 5432
+      PLATFORM_DB_USER: platform
+      PLATFORM_DB_PASSWORD: platform
+      PLATFORM_DB_NAME: platform
+      PLATFORM_RUN_MIGRATIONS: "true"
+      PLATFORM_SERVE_FRONTEND: "true"
+      PLATFORM_CREDENTIAL_ENC_KEY: "lVT1zKoYEtMTNMIXB4sEgbLiZYodV3VZHZdjec1LxJo="
+      PLATFORM_UPDATER_URL: http://platform-updater:9200
+      PLATFORM_UPDATER_TOKEN: e2e-token
+      PLATFORM_UPDATE_REPO: ly1713/platform-api
+    volumes:
+      - e2e-data:/data
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:9100/api/auth/status').status == 200 else 1)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  platform-worker:
+    image: ghcr.io/ly1713/platform-api:${PLATFORM_VERSION}
+    command: ["python", "-m", "app.workers.runner"]
+    environment:
+      PLATFORM_DB_HOST: db
+      PLATFORM_DB_PORT: 5432
+      PLATFORM_DB_USER: platform
+      PLATFORM_DB_PASSWORD: platform
+      PLATFORM_DB_NAME: platform
+      PLATFORM_RUN_MIGRATIONS: "false"
+      PLATFORM_SERVE_FRONTEND: "false"
+      PLATFORM_CREDENTIAL_ENC_KEY: "lVT1zKoYEtMTNMIXB4sEgbLiZYodV3VZHZdjec1LxJo="
+    volumes:
+      - e2e-data:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  platform-updater:
+    image: ghcr.io/ly1713/platform-api-updater:${PLATFORM_UPDATER_VERSION:-${PLATFORM_VERSION}}
+    environment:
+      PLATFORM_UPDATER_TOKEN: e2e-token
+      UPDATER_COMPOSE_FILE: /compose/docker-compose.yml
+      COMPOSE_PROJECT_NAME: xsai-e2e19
+      POSTGRES_USER: platform
+      POSTGRES_DB: platform
+      UPDATER_DATA_DIR: /data
+      UPDATER_BACKUP_DIR: /backups
+      UPDATER_ENV_FILE: /compose/.env
+      UPDATER_API_HEALTH_URL: http://platform-api:9100/api/system/version
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./:/compose
+      - e2e-data:/data
+      - e2e-backups:/backups
+    depends_on:
+      platform-api:
+        condition: service_healthy
+    restart: "no"
+
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: platform
+      POSTGRES_PASSWORD: platform
+      POSTGRES_DB: platform
+    volumes:
+      - e2e-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "platform"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: "no"
+
+volumes:
+  e2e-data:
+  e2e-backups:
+  e2e-pg:

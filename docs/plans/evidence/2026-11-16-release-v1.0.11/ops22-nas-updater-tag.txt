@@ -1,0 +1,14 @@
+# NAS 边车 tag 解耦验证（Compose v2.40.3，只读，不改部署）
+
+$ cd /vol1/1000/docker/platform-api/src && PLATFORM_VERSION=v1.0.9 docker compose --profile updater config | grep "^    image: ghcr"
+    image: ghcr.io/ly1713/platform-api:v1.0.9
+    image: ghcr.io/ly1713/platform-api-updater:v1.0.11
+    image: ghcr.io/ly1713/platform-api:v1.0.9
+
+$ 不覆盖 PLATFORM_VERSION（即 .env 现值 v1.0.11）时
+    image: ghcr.io/ly1713/platform-api:v1.0.11
+    image: ghcr.io/ly1713/platform-api-updater:v1.0.11
+    image: ghcr.io/ly1713/platform-api:v1.0.11
+
+$ 边车/E2E 相关容器现状
+platform-api-platform-updater-1	ghcr.io/ly1713/platform-api-updater:v1.0.11	Up About an hour (healthy)
