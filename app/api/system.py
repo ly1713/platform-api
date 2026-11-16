@@ -658,26 +658,28 @@ def diagnostics(db: Session = Depends(get_db)):
             fix=capability.fix,
         )
     try:
-        import playwright  # noqa: F401
-
         from app.modules import browser_runtime
 
         st = browser_runtime.status()
-        if st["playwright"] and st["chromium"]:
-            add("浏览器运行时", True, "Playwright + Chromium 就绪，抖音/小红书扫码登录可用")
-        elif st["playwright"]:
-            add("浏览器运行时", False, "Playwright 已装但缺 Chromium：uv run playwright install chromium")
-        else:
-            add("浏览器运行时", False, "未安装。抖音/小红书扫码不可用，可用手动粘 Cookie 兜底")
-        add(
-            "Node",
-            st["node_available"],
-            "可选：仅部分外部工具需要；扫码登录不依赖 Node",
-            required=False,
-            fix="需要该工具时安装 Node.js",
-        )
-    except ImportError:
+    except Exception:  # noqa: BLE001 - 诊断页自身绝不能因为探测失败而少返回行
+        st = {"playwright": False, "chromium": False, "node_available": shutil.which("node") is not None}
+    if st["playwright"] and st["chromium"]:
+        add("浏览器运行时", True, "Playwright + Chromium 就绪，抖音/小红书扫码登录可用")
+    elif st["playwright"]:
+        add("浏览器运行时", False, "Playwright 已装但缺 Chromium：uv run playwright install chromium")
+    else:
         add("浏览器运行时", False, "未安装。抖音/小红书扫码不可用，可用手动粘 Cookie 兜底")
+    # Optional capabilities must always appear in the response.  Omitting the
+    # row when an unrelated optional package is absent makes the same
+    # deployment report different shapes to operators and clients — and the
+    # frontend reads `optional_failures` to decide whether to warn.
+    add(
+        "Node",
+        st["node_available"],
+        "可选：仅部分外部工具需要；扫码登录不依赖 Node",
+        required=False,
+        fix="需要该工具时安装 Node.js",
+    )
     add("定时体检", scheduler.running, f"间隔 {settings.account_check_interval} 分钟")
     # API 能起不代表后台任务能跑。裸机安装只起 uvicorn 时，所有下载/转录/同步
     # 会永久停在 queued；这个检查必须进入必需项，而不是让用户从队列页猜。
