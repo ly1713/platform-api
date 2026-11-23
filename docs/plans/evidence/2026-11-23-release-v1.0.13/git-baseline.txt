@@ -1,0 +1,19 @@
+captured_at=2026-11-23T21:37:38Z
+branch=main
+head=59571cd5069da8e77e94dcc5edc25a758e8f114a
+describe=v1.0.12-4-g59571cd
+latest_tag=v1.0.12
+target_version=v1.0.13
+dirty_paths=1
+released_head=312963528f082052e4b64a5d30a9c9c81450a9dc
+db_head=0036_sqlite_indexes.py
+--- commits since v1.0.12 ---
+59571cd feat(followed-creators): 移除改名归档并配归档箱，补项目级样式门禁
+2f432ce docs: 补归档 v1.0.12 发布前基线与产物核对
+1334c04 perf(sqlite): 桌面版双进程共用同一个 .db 的加固与查询优化
+442837d feat(breakdown): 拆解外移给外部 Agent，平台只备料与兜底
+
+--- 说明 ---
+本文件是 21:37Z 的发布前基线（当时 head=59571cd，tag 尚未创建）。
+59571cd 的首次 CI（run 45271645992）因 test_sqlite_hardening 依赖本机 data/secret.key
+而失败，修复提交 312963528f 后 CI 转绿（run 45273626528），tag v1.0.13 打在 3129635 上。

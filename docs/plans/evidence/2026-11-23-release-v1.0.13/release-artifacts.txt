@@ -1,0 +1,21 @@
+# v1.0.13 发布产物核对
+
+日期：2026-11-23
+tag commit：312963528f082052e4b64a5d30a9c9c81450a9dc
+CI run：45273626528（test success / build success）
+
+## Release
+https://github.com/ly1713/platform-api/releases/tag/v1.0.13
+createdAt 2026-11-23T21:49:48Z（publishedAt 2026-11-23T22:05:25Z）
+
+## GHCR tags
+platform-api:v1.0.13  存在
+platform-api:latest   存在
+platform-api:v1       存在
+platform-api:v1.0     存在
+updater:v1.0.13     存在
+updater:latest      存在
+
+## 镜像 digest（实测，匿名 token 查询 manifest）
+platform-api         v1.0.13 sha256:fdf95f705c858be305b01f75c4e0c5f2856ae507216485631dd43f889c0e3668
+platform-api-updater v1.0.13 sha256:fdfe1b9f1b84ea98d4acd7df07c296932f6a5d21cdda6c214f89441016bd242c

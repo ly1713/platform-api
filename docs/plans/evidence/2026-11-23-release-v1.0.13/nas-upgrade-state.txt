@@ -1,0 +1,49 @@
+# NAS v1.0.11 -> v1.0.13 升级前后状态（实测）
+
+NAS: fnos / 192.168.2.4，部署目录 /vol1/1000/docker/platform-api/src
+
+## 升级前（v1.0.11）
+```
+app_version=v1.0.11  git_commit=68dcb9a0d36063f26cfd1361f92d675b6e18e0d8  db_revision=0034  db_head=0034  db_in_sync=true
+.env: PLATFORM_VERSION=v1.0.11  PLATFORM_UPDATER_VERSION=v1.0.11
+容器: platform-api / platform-worker / platform-updater 均为 v1.0.11，db 为 postgres:17-alpine
+数据量: media_asset=9266 content_item=9382 transcript=7151 viral_breakdown=7123 platform_account=2 subscription=239
+备份: /backups/backup-v1.0.13-20261123T221030Z.tar.gz
+```
+
+## 升级后（v1.0.13，当前）
+```
+{
+    "app_version": "v1.0.13",
+    "git_commit": "312963528f082052e4b64a5d30a9c9c81450a9dc",
+    "build_time": "2026-11-23T21:49:37Z",
+    "version_source": "release_image",
+    "db_revision": "0036",
+    "db_head": "0036",
+    "db_in_sync": true
+}
+```
+
+## .env 固定版本
+```
+PLATFORM_VERSION=v1.0.13
+PLATFORM_UPDATER_VERSION=v1.0.13
+```
+
+## 容器
+```
+platform-api-db-1 | postgres:17-alpine | Up 17 hours (healthy)
+platform-api-platform-api-1 | ghcr.io/ly1713/platform-api:v1.0.13 | Up 7 minutes (healthy)
+platform-api-platform-updater-1 | ghcr.io/ly1713/platform-api-updater:v1.0.13 | Up 12 minutes (healthy)
+platform-api-platform-worker-1 | ghcr.io/ly1713/platform-api:v1.0.13 | Up 7 minutes
+```
+
+## 升级后数据量（与升级前逐项一致）
+```
+media_asset=9266
+content_item=9382
+transcript=7151
+viral_breakdown=7123
+platform_account=2
+subscription=239
+```

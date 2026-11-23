@@ -1,0 +1,73 @@
+{
+  "steps": [
+    {
+      "step": "登录",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "未带会话访问接口被拒",
+      "ok": true,
+      "detail": "{\"status\":401}"
+    },
+    {
+      "step": "路由 overview",
+      "ok": true,
+      "detail": "{\"hash\":\"#/overview\",\"rendered\":true,\"emptyErr\":false,\"newErrs\":[]}"
+    },
+    {
+      "step": "路由 accounts",
+      "ok": true,
+      "detail": "{\"hash\":\"#/accounts\",\"rendered\":true,\"emptyErr\":false,\"newErrs\":[]}"
+    },
+    {
+      "step": "路由 crawl",
+      "ok": true,
+      "detail": "{\"hash\":\"#/crawl\",\"rendered\":true,\"emptyErr\":false,\"newErrs\":[]}"
+    },
+    {
+      "step": "路由 followed-creators",
+      "ok": true,
+      "detail": "{\"hash\":\"#/followed-creators\",\"rendered\":true,\"emptyErr\":false,\"newErrs\":[]}"
+    },
+    {
+      "step": "路由 assets",
+      "ok": true,
+      "detail": "{\"hash\":\"#/assets\",\"rendered\":true,\"emptyErr\":false,\"newErrs\":[]}"
+    },
+    {
+      "step": "路由 pipeline",
+      "ok": true,
+      "detail": "{\"hash\":\"#/pipeline\",\"rendered\":true,\"emptyErr\":false,\"newErrs\":[]}"
+    },
+    {
+      "step": "路由 models",
+      "ok": true,
+      "detail": "{\"hash\":\"#/models\",\"rendered\":true,\"emptyErr\":false,\"newErrs\":[]}"
+    },
+    {
+      "step": "路由 system",
+      "ok": true,
+      "detail": "{\"hash\":\"#/system\",\"rendered\":true,\"emptyErr\":false,\"newErrs\":[]}"
+    },
+    {
+      "step": "素材库读到真实数据",
+      "ok": true,
+      "detail": "{\"rows\":0,\"num\":\"9266 条\",\"len\":22594}"
+    },
+    {
+      "step": "无 5xx 接口",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "无页面报错",
+      "ok": false,
+      "detail": "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+    }
+  ],
+  "apiFails": [],
+  "errors": [
+    "Failed to load resource: the server responded with a status of 401 (Unauthorized)"
+  ]
+}

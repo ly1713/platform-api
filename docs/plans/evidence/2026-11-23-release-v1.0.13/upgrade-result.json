@@ -1,0 +1,69 @@
+{
+  "steps": [
+    {
+      "step": "登录进入工作台",
+      "ok": true,
+      "detail": "#/overview"
+    },
+    {
+      "step": "打开系统设置",
+      "ok": true,
+      "detail": "⚙系统设置"
+    },
+    {
+      "step": "打开版本与升级",
+      "ok": true,
+      "detail": "[\" · 本机\\n退出登录\\n系统设置\\n素材库\\n系统设置\\n系统设置\\n存储目录 · AI 时段 · 加工分档 · 类型提示词 · 依赖诊断\\n存储目录\\n模型接入\\n评论抓取\\nAI 时段\\n视频理解\\n爆款拆解\\n同步频率\\n依赖诊断\\n版本与升级\\n管理员\\n应用版本\\tv1.0.11\\t提交\\t68dcb9a0d36063f26cfd1361f92d675b6e18e0d8\\n版本来源\\t发行镜像\\t数据库版本\\t0034\\n内置迁移 head\\t0034\\t数据库同步\\t\\n已同步\\n\\n构建时间\\t2026-11-16T03:40:26Z\\n网页升级会自动备份，失败自动回滚\\n\\n升级流程：备份 → 拉取镜像 → 重建服务 → 健康校验；任一步失败会自动回滚到当前版本。过程中服务会短暂不可用。\\n\\n检查更新\"]"
+    },
+    {
+      "step": "检查更新拿到新版本",
+      "ok": true,
+      "detail": "[\" · 本机\\n退出登录\\n系统设置\\n素材库\\n系统设置\\n系统设置\\n存储目录 · AI 时段 · 加工分档 · 类型提示词 · 依赖诊断\\n存储目录\\n模型接入\\n评论抓取\\nAI 时段\\n视频理解\\n爆款拆解\\n同步频率\\n依赖诊断\\n版本与升级\\n管理员\\n应用版本\\tv1.0.11\\t提交\\t68dcb9a0d36063f26cfd1361f92d675b6e18e0d8\\n版本来源\\t发行镜像\\t数据库版本\\t0034\\n内置迁移 head\\t0034\\t数据库同步\\t\\n已同步\\n\\n构建时间\\t2026-11-16T03:40:26Z\\n发现新版本\\n\\n最新 v1.0.13，当前 v1.0.11。查看发布说明：https://github.com/ly1713/platform-api/releases/tag/v1.0.13\\n\\n网页升级会自动备份，失败自动回滚\\n\\n升级流程：备份 → 拉取镜像 → 重建服务 → 健康校验；任一步失败会自动回滚到当前版本。过程中服务会短暂不可用。\\n\\n升级到 v1.0.13\\n有新版本 v1.0.13\\n当前 v1.0.11\"]"
+    },
+    {
+      "step": "点击升级到目标版本",
+      "ok": true,
+      "detail": "升级到 v1.0.13"
+    },
+    {
+      "step": "确认框点开始升级",
+      "ok": true,
+      "detail": "开始升级"
+    },
+    {
+      "step": "页面报告升级完成",
+      "ok": true,
+      "detail": "[\" · 本机\\n退出登录\\n系统设置\\n素材库\\n系统设置\\n系统设置\\n存储目录 · AI 时段 · 加工分档 · 类型提示词 · 依赖诊断\\n存储目录\\n模型接入\\n评论抓取\\nAI 时段\\n视频理解\\n爆款拆解\\n同步频率\\n依赖诊断\\n版本与升级\\n管理员\\n应用版本\\tv1.0.13\\t提交\\t312963528f082052e4b64a5d30a9c9c81450a9dc\\n版本来源\\t发行镜像\\t数据库版本\\t0036\\n内置迁移 head\\t0036\\t数据库同步\\t\\n已同步\\n\\n构建时间\\t2026-11-23T21:49:37Z\\n发现新版本\\n\\n最新 v1.0.13，当前 v1.0.11。查看发布说明：https://github.com/ly1713/platform-api/releases/tag/v1.0.13\\n\\n网页升级会自动备份，失败自动回滚\\n\\n升级流程：备份 → 拉取镜像 → 重建服务 → 健康校验；任一步失败会自动回滚到当前版本。过程中服务会短暂不可用。\\n\\n升级到 v1.0.13\\n有新版本 v1.0.13\\n提交已核验\\n当前 v1.0.11\\n升级成功\\nv1.0.11 → v1.0.13\\n1\\n备份\\n开始备份数据库与 data 卷\\n备份\\n/backups/backup-v1.0.13-20261123T221030Z.tar.gz\\n3\\n拉取镜像\\n拉取 v1.0.13\\n拉取镜像\\n5\\n重建服务\\n重建 platform-api / platform-worker\\n重建服务\\n7\\n健康校验\\n健康校验新版本\\n健康校验\\n9\\n记录版本\\n记录当前版本到 .e\"]"
+    },
+    {
+      "step": "终态显示新版本",
+      "ok": false,
+      "detail": "{\"version\":null,\"commitVerified\":true,\"onlyVersion\":false,\"hasBackup\":true,\"snippet\":[\" · 本机\\n退出登录\\n系统设置\\n素材库\\n系统设置\\n系统设置\\n存储目录 · AI 时段 · 加工分档 · 类型提示词 · 依赖诊断\\n存储目录\\n模型接入\\n评论抓取\\nAI 时段\\n视频理解\\n爆款拆解\\n同步频率\\n依赖诊断\\n版本与升级\\n管理员\\n应用版本\\tv1.0.13\\t提交\\t312963528f082052e4b64a5d30a9c9c81450a9dc\\n版本来源\\t发行镜像\\t数据库版本\\t0036\\n内置迁移 head\\t0036\\t数据库同步\\t\\n已同步\\n\\n构建时间\\t2026-11-23T21:49:37Z\\n发现新版本\\n\\n最新 v1.0.13，当前 v1.0.11。查看发布说明：https://github.com/ly1713/platform-api/releases/tag/v1.0.13\\n\\n网页升级会自动备份，失败自动回滚\\n\\n升级流程：备份 → 拉取镜像 → 重建服务 → 健康校验；任一步失败会自动回滚到当前版本。过程中服务会短暂不可用。\\n\\n升级到 v1.0.13\\n有新版本 v1.0.13\\n提交已核验\\n当前 v1.0.11\\n升级成功\\nv1.0.11 → v1.0.13\\n1\\n备份\\n开始备份数据库与 data 卷\\n备份\\n/backups/backup-v1.0.13-20261123T221030Z.tar.gz\\n3\\n拉取镜像\\n拉取 v1.0.13\\n拉取镜像\\n5\\n重建服务\\n重建 platform-api / platform-worker\\n重建服务\\n7\\n健康校验\\n健康校验新版本\\n健康校验\\n9\\n记录版本\\n记录当前版本到 .e\",\"v\\n记录版本\\n备份：/backups/backup-v1.0.13-20261123T221030Z.tar.gz\"]}"
+    },
+    {
+      "step": "无页面报错",
+      "ok": false,
+      "detail": "Failed to load resource: net::ERR_CONNECTION_REFUSED | Failed to load resource: net::ERR_CONNECTION_REFUSED | Failed to load resource: net::ERR_CONNECTION_REFUSED | Failed to load resource: net::ERR_CONNECTION_REFUSED"
+    }
+  ],
+  "errors": [
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_INCOMPLETE_CHUNKED_ENCODING",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED",
+    "Failed to load resource: net::ERR_CONNECTION_REFUSED"
+  ]
+}

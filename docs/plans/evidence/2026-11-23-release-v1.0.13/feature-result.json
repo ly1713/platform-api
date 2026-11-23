@@ -1,0 +1,110 @@
+{
+  "steps": [
+    {
+      "step": "NAS 登录",
+      "ok": true,
+      "detail": "#/overview"
+    },
+    {
+      "step": "关注列表渲染卡片",
+      "ok": true,
+      "detail": "239 张"
+    },
+    {
+      "step": "默认排序=最新关注",
+      "ok": true,
+      "detail": "最新关注"
+    },
+    {
+      "step": "当前列表有搜索框",
+      "ok": true,
+      "detail": "在 239 个来源里找昵称 / ID"
+    },
+    {
+      "step": "工具栏有「归档」入口",
+      "ok": true,
+      "detail": "归档"
+    },
+    {
+      "step": "取到首条博主名",
+      "ok": true,
+      "detail": "极物君的AI营地"
+    },
+    {
+      "step": "归档确认弹层 position:fixed 且在视口内（核心修复）",
+      "ok": true,
+      "detail": "{\"present\":true,\"position\":\"fixed\",\"inViewport\":true,\"rect\":[478,381,484,238],\"viewport\":[1440,1000]}"
+    },
+    {
+      "step": "确认弹层写明归档后果",
+      "ok": true,
+      "detail": "{\"title\":\"归档「极物君的AI营地」\",\"hasCancel\":true,\"hasConfirm\":true,\"body\":\"归档后它不再出现在关注列表，也不再自动同步。 已入库的素材全部保留，随时可以从「归档」里复原。\\n\\n同步该博主名下视频：本来就未开启\"}"
+    },
+    {
+      "step": "归档后当前列表少一条",
+      "ok": true,
+      "detail": "239 -> 238"
+    },
+    {
+      "step": "归档的博主不再出现在当前列表",
+      "ok": true,
+      "detail": "stillListed=false"
+    },
+    {
+      "step": "确认弹层已关闭",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "归档箱打开且浮在视口内",
+      "ok": true,
+      "detail": "{\"present\":true,\"position\":\"fixed\",\"inViewport\":true,\"rect\":[338,399,764,202],\"viewport\":[1440,1000]}"
+    },
+    {
+      "step": "归档箱有搜索框",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "归档箱显示头像+昵称+粉丝+复原",
+      "ok": true,
+      "detail": "[{\"name\":\"极物君的AI营地\",\"stats\":\"粉丝 6.6万·归档于 11/23 22:15\",\"hasAvatar\":true,\"restore\":\"复原\",\"hasArchivedAt\":true}]"
+    },
+    {
+      "step": "被归档的博主在归档箱里",
+      "ok": true,
+      "detail": "极物君的AI营地 / 归档共 1 条（角标 1）"
+    },
+    {
+      "step": "归档箱搜索能筛",
+      "ok": true,
+      "detail": "极物 -> 1 条 [\"极物君的AI营地\"]"
+    },
+    {
+      "step": "复原后离开归档箱",
+      "ok": true,
+      "detail": "1 -> 0"
+    },
+    {
+      "step": "复原的博主回到当前列表",
+      "ok": true,
+      "detail": "238 -> 239, listed=true"
+    },
+    {
+      "step": "归档箱已关闭",
+      "ok": true,
+      "detail": ""
+    },
+    {
+      "step": "当前列表搜索能筛",
+      "ok": true,
+      "detail": "\"极物\" -> 1/239"
+    },
+    {
+      "step": "无页面报错",
+      "ok": true,
+      "detail": ""
+    }
+  ],
+  "errors": []
+}
