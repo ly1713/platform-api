@@ -1,0 +1,18 @@
+# NAS 升级前基线（v1.0.11 -> v1.0.12）
+
+日期：2026-11-16
+
+/api/system/version:
+{"app_version":"v1.0.11","git_commit":"68dcb9a0d36063f26cfd1361f92d675b6e18e0d8","build_time":"2026-11-16T03:40:26Z","version_source":"release_image","db_revision":"0034","db_head":"0034","db_in_sync":true}
+
+.env 属主/权限（关键回归基线）:
+/vol1/1000/docker/platform-api/src/.env owner=ztb:Users uid=1000 gid=1001 mode=755 size=1439
+
+容器:
+platform-api-platform-updater-1  ghcr.io/ly1713/platform-api-updater:v1.0.11  Up 10 hours (healthy)
+platform-api-platform-worker-1   ghcr.io/ly1713/platform-api:v1.0.11           Up 10 hours
+platform-api-platform-api-1      ghcr.io/ly1713/platform-api:v1.0.11           Up 10 hours (healthy)
+platform-api-db-1                postgres:17-alpine                            Up 23 hours (healthy)
+
+数据量:
+media_asset=9266 content_item=9370 transcript=7151 viral_breakdown=7123 platform_account=2 sync_run=400

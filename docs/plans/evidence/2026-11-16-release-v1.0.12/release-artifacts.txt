@@ -1,0 +1,26 @@
+# v1.0.12 发布产物核对
+
+日期：2026-11-16
+tag commit：6c1926ee29f7398be2beeaef35507c41aba34582
+CI run：43883017572（test success / build success）
+
+## Release
+https://github.com/ly1713/platform-api/releases/tag/v1.0.12
+createdAt 2026-11-16T14:10:36Z
+
+## GHCR tags（主镜像与边车均成对推送）
+platform-api          tags = v1.0.12, latest, v1, v1.0
+platform-api-updater  tags = v1.0.12, latest, v1, v1.0
+updater digest        sha256:48b88829604e8fb70d798206992074a8e58389f30c511bcb43708d48a38b88f1
+
+## 镜像内容核对（ghcr.io/ly1713/platform-api-updater:v1.0.12）
+
+$ docker run --rm --entrypoint sh ...:v1.0.12 -c '<grep 各修复标记>'
+_compose_images            1     # OPS-19
+_image_exists_locally      1     # OPS-19
+_pull_failure_is_fatal     1     # OPS-19
+_stale_compose_hint        1     # OPS-19
+keep_owner                 4     # OPS-21
+from_version.strip         0     # OPS-20，写法为 (job.from_version or "").strip()
+
+engine.py:287  target = (job.from_version or "").strip()
