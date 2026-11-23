@@ -252,7 +252,9 @@ class SyncRun(Base):
     # 发起这次运行的队列任务。API 只提交命令，运行记录通过 job_id 可追溯到执行平面。
     job_id: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
     started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 心跳索引供超时回收扫描（WHERE heartbeat_at < now）使用；迁移里早已建了同名
+    # 索引，但模型没声明 → create_all 路径（桌面首次启动）会漏掉，这里补齐。
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="running")  # running/success/error
     fetched: Mapped[int] = mapped_column(Integer, default=0)
@@ -299,6 +301,12 @@ class ContentMetricSnapshot(Base):
     """互动指标快照：每次抓取存一行，才能画趋势走势。"""
 
     __tablename__ = "content_metric_snapshot"
+    __table_args__ = (
+        # 素材列表按点赞排序时，每行要取「该内容最新一条快照」。复合索引让这个
+        # 相关子查询走 COVERING INDEX 直接拿到 like，不回表（实测 43ms → 24ms）。
+        # 顺序必须 content_id → captured_at → id，与 ORDER BY captured_at DESC, id DESC 对应。
+        Index("ix_cms_content_captured", "content_id", "captured_at", "id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     content_id: Mapped[int] = mapped_column(ForeignKey("content_item.id", ondelete="CASCADE"), index=True)
@@ -315,6 +323,12 @@ class MediaAsset(Base):
     """素材文件：内容下载到本地后的产物，跟踪下载/转录/分析三态。"""
 
     __tablename__ = "media_asset"
+    __table_args__ = (
+        # 素材列表默认 WHERE deleted_at IS NULL ORDER BY id DESC，是打开首页的第一个
+        # 查询。deleted_at 选择度极低（几乎全 NULL），单列索引帮不上排序，带上 id
+        # 才能省掉一次 TEMP B-TREE。
+        Index("ix_media_asset_deleted_id", "deleted_at", "id"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     content_id: Mapped[int] = mapped_column(ForeignKey("content_item.id", ondelete="CASCADE"), index=True)
@@ -353,6 +367,9 @@ class JobQueue(Base):
             postgresql_where=text("dedup_key IS NOT NULL AND status IN ('queued', 'running')"),
             sqlite_where=text("dedup_key IS NOT NULL AND status IN ('queued', 'running')"),
         ),
+        # worker 每 2 秒轮询 WHERE status='queued' AND run_after<=now。
+        # 单列索引只能用一个条件，复合索引让两条同时命中。
+        Index("ix_job_queue_status_run_after", "status", "run_after"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)
@@ -368,7 +385,8 @@ class JobQueue(Base):
     dedup_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
     locked_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     # worker 执行期间定期刷新；只按 locked_at 判超时会把仍在跑的长任务误回收。
-    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 索引供超时回收扫描使用（create_all 路径也要有，故在此声明）。
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     run_after: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
@@ -492,7 +510,8 @@ class CrawlRun(Base):
         ForeignKey("platform_account.id", ondelete="SET NULL"), nullable=True, index=True
     )
     started_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
-    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    # 同上：迁移建了索引，模型补齐，避免 create_all 与 alembic 两条路径分叉。
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     status: Mapped[str] = mapped_column(String(16), default="running")
     fetched: Mapped[int] = mapped_column(Integer, default=0)
@@ -781,7 +800,7 @@ class AiModel(Base):
     capabilities: Mapped[dict] = mapped_column(JSON, default=dict)
     probe_status: Mapped[str] = mapped_column(String(16), default="untested")
     probe_error: Mapped[str] = mapped_column(Text, default="")
-    probe_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    probe_started_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True, index=True)
     probed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)

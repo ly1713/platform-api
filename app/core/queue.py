@@ -1,14 +1,18 @@
-"""基于 PostgreSQL 的任务队列。
+"""任务队列，PostgreSQL 与 SQLite 双后端。
 
-取任务用 SELECT ... FOR UPDATE SKIP LOCKED，多 worker 并发安全，不引入 Redis/Celery。
-任务表见 models.JobQueue。job_type: download / transcribe / analyze / sync / crawl。
+取任务在 PostgreSQL 上用 ``SELECT ... FOR UPDATE SKIP LOCKED``；SQLite 没有该语法，
+改用**条件 UPDATE 乐观锁**（同事务内 ``UPDATE ... WHERE status='queued'``，看 rowcount），
+这样 api + worker 双进程共用同一个 .db 时也不会抢到同一个任务。
+
+不引入 Redis/Celery。任务表见 models.JobQueue。
+job_type: download / transcribe / analyze / sync / crawl。
 """
 
 import hashlib
 import json
 from datetime import datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.exc import IntegrityError
@@ -174,6 +178,38 @@ def claim(
     job = db.scalar(stmt)
     if job is None:
         return None
+
+    if is_sqlite:
+        # SQLite 没有 FOR UPDATE SKIP LOCKED，直接「读到就改」会让多个进程抢到同一行：
+        # 实测 3 进程并发 claim，20 个任务被领取 30 次，同一个任务最多被执行 3 遍
+        # （重复下载、重复调用大模型计费）。桌面版是 api + worker 双进程共用同一个
+        # .db，这个降级分支不再是「测试专用」，必须真正串行化。
+        #
+        # 做法：把状态变更写成**条件 UPDATE**（只有仍是 queued 才置 running），
+        # 用 rowcount 判断自己是否抢到。整个 SELECT+UPDATE 在同一事务内，配合
+        # WAL + busy_timeout，命中 0 行说明别人先抢走了，直接放弃本次领取。
+        now = datetime.utcnow()
+        claimed = db.execute(
+            update(JobQueue)
+            .where(
+                JobQueue.id == job.id,
+                JobQueue.status == "queued",  # 关键：乐观锁条件
+            )
+            .values(
+                status="running",
+                locked_at=now,
+                heartbeat_at=now,
+                attempts=JobQueue.attempts + 1,
+            )
+        )
+        if claimed.rowcount != 1:
+            # 被其它进程抢先，回滚掉本次读到的快照，交给下一轮轮询。
+            db.rollback()
+            return None
+        db.commit()
+        db.refresh(job)
+        return job
+
     job.status = "running"
     job.locked_at = datetime.utcnow()
     job.heartbeat_at = job.locked_at

@@ -1,3 +1,5 @@
+import os
+import sys
 from pathlib import Path
 
 from pydantic import field_validator
@@ -7,10 +9,35 @@ from pydantic_settings import BaseSettings, NoDecode
 from sqlalchemy.engine import URL, make_url
 
 
+def _default_data_dir() -> Path:
+    """默认数据目录。
+
+    开发/容器沿用「源码旁边的 data/」；**打包后的桌面版**不能用它——安装目录
+    通常在 Program Files 或只读的 .app 包里，写 secret.key / SQLite 库会失败
+    （Windows 上还会被 UAC 虚拟化悄悄重定向到 VirtualStore，表现为"数据莫名消失"）。
+
+    判据用 ``sys.frozen``：PyInstaller 等打包器会置 True。桌面版改用各平台
+    约定的用户数据目录：
+      - Windows: %LOCALAPPDATA%\\XingCai
+      - macOS:   ~/Library/Application Support/XingCai
+      - 其它:    ~/.local/share/XingCai
+    显式设置 PLATFORM_DATA_DIR 时仍以环境变量为准（下面 BaseSettings 会覆盖）。
+    """
+    if getattr(sys, "frozen", False):
+        if sys.platform == "win32":
+            base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+        elif sys.platform == "darwin":
+            base = Path.home() / "Library" / "Application Support"
+        else:
+            base = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share")
+        return base / "XingCai"
+    return Path(__file__).resolve().parent.parent / "data"
+
+
 class Settings(BaseSettings):
     """全局配置。环境变量前缀 PLATFORM_，例如 PLATFORM_PORT=9100。"""
 
-    data_dir: Path = Path(__file__).resolve().parent.parent / "data"
+    data_dir: Path = _default_data_dir()
     # 完整 DSN 是兼容入口（脚本/既有部署常用）。为空时由下面的结构化字段
     # 在进程内构建 URL，避免数据库密码里的 @ : / 等字符破坏连接串。
     database_url: str = ""
