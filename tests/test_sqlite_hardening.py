@@ -11,11 +11,15 @@
    两条建库路径必须一致——桌面首次启动走 create_all，升级走 alembic。
 """
 
+import base64
 import multiprocessing as mp
 import os
 import sqlite3
+import subprocess
+import sys
 import time
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from sqlalchemy import create_engine, event, text
@@ -169,22 +173,42 @@ def test_concurrent_claim_never_hands_out_same_job_twice(tmp_path):
 # --------------------------------------------------------------- 索引
 
 
-def test_desktop_perf_indexes_exist_after_migration(tmp_path):
-    """点赞排序 / 队列轮询的复合索引必须由迁移建出来。"""
-    import subprocess
-    import sys
+def _alembic_env(tmp_path: Path, db_path: Path) -> dict[str, str]:
+    """给子进程 alembic 一份自洽、与开发机状态无关的运行环境。
 
-    db_path = tmp_path / "mig.db"
-    env = {**os.environ, "PLATFORM_DATABASE_URL": f"sqlite:///{db_path}", "PLATFORM_AUTO_CREATE_TABLES": "false"}
+    ``alembic upgrade head`` 会一路跑到 ``0018_model_access``，那条迁移要求加密
+    密钥已就绪，否则拒绝建库（防止自动生成新 secret.key 覆盖已有凭证）。本机
+    之所以能过，是因为仓库里躺着 ``data/secret.key``——一个被 gitignore 的文件。
+    CI 上没有它，于是同一份代码在 CI 挂、在本机绿，是典型的"只在本机能过的测试"。
+
+    所以这里显式注入一次性密钥，并把 ``PLATFORM_DATA_DIR`` 指到 tmp_path：
+    迁移既不该依赖开发机的密钥，也不该往仓库的 data/ 里写任何东西。
+    """
+    return {
+        **os.environ,
+        "PLATFORM_DATABASE_URL": f"sqlite:///{db_path}",
+        "PLATFORM_AUTO_CREATE_TABLES": "false",
+        "PLATFORM_CREDENTIAL_ENC_KEY": base64.b64encode(os.urandom(32)).decode(),
+        "PLATFORM_DATA_DIR": str(tmp_path / "data"),
+    }
+
+
+def _run_alembic_upgrade(tmp_path: Path, db_path: Path) -> subprocess.CompletedProcess:
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    result = subprocess.run(
+    return subprocess.run(
         [sys.executable, "-m", "alembic", "upgrade", "head"],
         cwd=root,
-        env=env,
+        env=_alembic_env(tmp_path, db_path),
         capture_output=True,
         text=True,
         timeout=600,
     )
+
+
+def test_desktop_perf_indexes_exist_after_migration(tmp_path):
+    """点赞排序 / 队列轮询的复合索引必须由迁移建出来。"""
+    db_path = tmp_path / "mig.db"
+    result = _run_alembic_upgrade(tmp_path, db_path)
     assert result.returncode == 0, f"alembic upgrade 失败:\n{result.stderr[-2000:]}"
 
     conn = sqlite3.connect(db_path)
@@ -208,24 +232,11 @@ def test_create_all_and_migration_indexes_match(tmp_path):
     而升级走 alembic。若某个索引只在迁移里声明，全新安装的桌面用户就永远
     没有它 —— 表现为「同样数据量，别人快我慢」，极难排查。
     """
-    import subprocess
-    import sys
-
     from app import models  # noqa: F401
-
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     # 迁移建库
     mig_db = tmp_path / "mig_idx.db"
-    env = {**os.environ, "PLATFORM_DATABASE_URL": f"sqlite:///{mig_db}", "PLATFORM_AUTO_CREATE_TABLES": "false"}
-    r = subprocess.run(
-        [sys.executable, "-m", "alembic", "upgrade", "head"],
-        cwd=root,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=600,
-    )
+    r = _run_alembic_upgrade(tmp_path, mig_db)
     assert r.returncode == 0, r.stderr[-2000:]
 
     # create_all 建库
