@@ -52,17 +52,40 @@
       </button>
     </div>
 
-    <!-- 类型筛选 -->
-    <div class="ui-chips">
-      <button
-        v-for="t in typeFilters"
-        :key="t.value"
-        class="ui-chip"
-        :class="{ on: activeType === t.value }"
-        @click="activeType = t.value"
-      >
-        {{ t.label }}
-        <span v-if="t.value !== 'all' && typeCount(t.value)" class="chip-n">{{ typeCount(t.value) }}</span>
+    <!-- 类型筛选 / 搜索 / 排序，一行完成"缩小范围"这件事 -->
+    <div class="filter-row">
+      <div class="ui-chips">
+        <button
+          v-for="t in typeFilters"
+          :key="t.value"
+          class="ui-chip"
+          :class="{ on: activeType === t.value }"
+          @click="activeType = t.value"
+        >
+          {{ t.label }}
+          <span v-if="t.value !== 'all' && typeCount(t.value)" class="chip-n">{{ typeCount(t.value) }}</span>
+        </button>
+      </div>
+      <span class="grow" />
+      <label class="find">
+        <span class="find-ic" aria-hidden="true">⌕</span>
+        <input
+          v-model="keyword"
+          class="find-input"
+          type="search"
+          :placeholder="`在 ${accountRows.length} 个来源里找昵称 / ID`"
+          aria-label="搜索关注列表"
+        />
+        <button v-if="keyword" class="find-clear" aria-label="清空搜索" @click="keyword = ''">×</button>
+      </label>
+      <el-select v-model="sortKey" class="sort-select" size="default" aria-label="排序方式">
+        <el-option label="最新关注" value="followed" />
+        <el-option label="粉丝最多" value="followers" />
+        <el-option label="上次同步" value="synced" />
+        <el-option label="昵称" value="name" />
+      </el-select>
+      <button class="ui-btn ghost sm" @click="openArchive">
+        归档 {{ archivedCount ? `(${archivedCount})` : '' }}
       </button>
     </div>
 
@@ -181,10 +204,11 @@
             <span class="grow" />
             <button class="ui-btn ghost sm" :disabled="!syncActive(row)" @click="openRuns(row)">历史</button>
             <button class="ui-btn ghost sm" @click="openEdit(row)">设置</button>
-            <button class="ui-btn ghost sm danger" @click="confirmRemove(row)">移除</button>
+            <button class="ui-btn ghost sm" @click="confirmArchive(row)">归档</button>
           </div>
           <div class="foot-meta">
             <span class="last">{{ row.last_sync_at ? `上次同步 ${fmt(row.last_sync_at)}` : '未同步' }}</span>
+            <span class="last">{{ followedLabel(row) }}</span>
           </div>
         </article>
       </div>
@@ -324,19 +348,91 @@
       </template>
     </el-dialog>
 
-    <!-- 移除确认 -->
-    <div v-if="removeTarget" class="ui-modal" @click.self="removeTarget = null">
+    <!-- 归档确认 -->
+    <div v-if="archiveTarget" class="ui-modal" @click.self="archiveTarget = null">
       <div class="ui-modal-box narrow">
-        <div class="ui-panel-head"><h2>移除跟踪</h2></div>
+        <div class="ui-panel-head"><h2>归档「{{ rowName(archiveTarget) }}」</h2></div>
         <div class="ui-modal-body">
           <p>
-            确定移除「{{ removeTarget.title || removeTarget.remote_id }}」？
-            已同步入库的内容不受影响，只是不再自动同步。
+            归档后它不再出现在关注列表，也不再自动同步。
+            已入库的素材全部保留，随时可以从「归档」里复原。
+          </p>
+          <p class="ui-modal-tip">
+            同步该博主名下视频：{{ archiveTarget.sync_videos ? '已开启，归档后停止' : '本来就未开启' }}
           </p>
         </div>
         <div class="ui-modal-foot">
-          <button class="ui-btn" @click="removeTarget = null">取消</button>
-          <button class="ui-btn danger" @click="doRemove">确认移除</button>
+          <button class="ui-btn" @click="archiveTarget = null">取消</button>
+          <button class="ui-btn danger" :disabled="archiving" @click="doArchive">
+            {{ archiving ? '归档中…' : '归档' }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- 归档箱：收拢所有已归档的来源，可搜索、可复原 -->
+    <div v-if="archiveOpen" class="ui-modal" @click.self="archiveOpen = false">
+      <div class="ui-modal-box wide archive-box">
+        <div class="ui-panel-head">
+          <h2>归档</h2>
+          <span class="ui-badge">{{ archivedRows.length }}</span>
+          <span class="grow" />
+          <button class="ui-btn ghost sm" @click="archiveOpen = false">关闭</button>
+        </div>
+        <div class="archive-search">
+          <span class="find-ic" aria-hidden="true">⌕</span>
+          <input
+            v-model="archiveKeyword"
+            class="find-input"
+            type="search"
+            placeholder="找已归档的博主 / 收藏夹"
+            aria-label="搜索归档"
+          />
+          <button v-if="archiveKeyword" class="find-clear" aria-label="清空搜索" @click="archiveKeyword = ''">×</button>
+        </div>
+        <div class="ui-modal-body archive-body">
+          <div v-if="archiveLoading" class="archive-empty">读取归档中…</div>
+          <div v-else-if="!archivedRows.length" class="archive-empty">
+            <div class="big">归档是空的</div>
+            <p>在关注列表里点「归档」的来源会收在这里，随时能复原。</p>
+          </div>
+          <div v-else-if="!archivedVisible.length" class="archive-empty">
+            没有匹配「{{ archiveKeyword }}」的归档
+          </div>
+          <ul v-else class="archive-list">
+            <li v-for="row in archivedVisible" :key="`${row.kind}-${row.id}`" class="archive-item">
+              <Avatar
+                v-if="row.kind === 'creator'"
+                class="ava"
+                :src="row.avatar_url"
+                :name="rowName(row)"
+                :size="46"
+              />
+              <span v-else class="ava src-ava">{{ sourceGlyph(row.source_type) }}</span>
+              <div class="archive-meta">
+                <div class="name">
+                  <span>{{ rowName(row) }}</span>
+                  <span class="ui-badge">{{ sourceText(row.source_type) }}</span>
+                </div>
+                <div class="stats">
+                  <template v-if="row.kind === 'creator'">
+                    粉丝 {{ (row.follower_count || 0) > 0 ? compact(row.follower_count || 0) : '—' }}
+                  </template>
+                  <template v-else>{{ row.remote_id }}</template>
+                  <span class="sep">·</span>
+                  <span>{{ archivedLabel(row) }}</span>
+                </div>
+              </div>
+              <PlatformMark :platform="row.platform" :show-label="false" size="sm" muted />
+              <button
+                class="ui-btn sm"
+                :disabled="restoring === `${row.kind}-${row.id}`"
+                @click="restoreRow(row)"
+              >
+                {{ restoring === `${row.kind}-${row.id}` ? '复原中…' : '复原' }}
+              </button>
+            </li>
+          </ul>
         </div>
       </div>
     </div>
@@ -370,7 +466,7 @@ import Avatar from '../components/Avatar.vue'
 import PlatformMark from '../components/PlatformMark.vue'
 import { apiCall, type Account, type PlatformInfo } from '../api'
 import { safeExternalUrl } from '../utils/safeUrl'
-import { formatMonthDayTime } from '../utils/time'
+import { formatMonthDayTime, utcMs } from '../utils/time'
 
 /** 统一后的"我跟踪的来源"：博主 = creator 来源，收藏夹/合集 = 其他来源。 */
 interface TrackRow {
@@ -399,12 +495,33 @@ interface TrackRow {
   creator_avatar: string
   avatar: string
   avatar_url: string
+  // 关注时间：本系统首次见到这段关注的时间（订阅行创建时间）。
+  // 平台不返回关注时间戳，所以"最新关注"按它排；首次导入后的先后才是准的。
+  created_at?: string | null
+  followed_at?: string | null
+  archived_at?: string | null
   // creator 专属（由后端从 creator_profile 合成）
   author_name?: string
   home_url?: string
   signature?: string
   verified?: boolean
   follower_count?: number
+}
+
+/** 归档箱里两种来源混在一起：creator 走关注接口，其余走订阅接口。 */
+interface ArchivedRow {
+  kind: 'creator' | 'subscription'
+  id: number
+  platform: string
+  source_type: string
+  remote_id: string
+  title: string
+  avatar_url?: string
+  author_name?: string
+  follower_count?: number
+  archived_at?: string | null
+  followed_at?: string | null
+  created_at?: string | null
 }
 
 interface RemoteSource { remote_id: string; title: string }
@@ -445,7 +562,20 @@ const syncing = ref<number | null>(null)
 const dialog = ref(false)
 const editing = ref<TrackRow | null>(null)
 const submitting = ref(false)
-const removeTarget = ref<TrackRow | null>(null)
+const archiveTarget = ref<TrackRow | null>(null)
+const archiving = ref(false)
+
+// 搜索与排序：默认「最新关注」，也就是按关注时间倒序。
+const keyword = ref('')
+const sortKey = ref<'followed' | 'followers' | 'synced' | 'name'>('followed')
+
+// 归档箱
+const archiveOpen = ref(false)
+const archiveLoading = ref(false)
+const archiveKeyword = ref('')
+const archivedRows = ref<ArchivedRow[]>([])
+const archivedCount = ref(0)
+const restoring = ref('')
 const subPickMode = ref<'list' | 'manual'>('list')
 const sources = ref<RemoteSource[]>([])
 const sourcesLoading = ref(false)
@@ -540,10 +670,52 @@ const storagePreview = computed(() => {
 const accountRows = computed(() =>
   rows.value.filter((r) => String(r.account_id) === activeAccountId.value),
 )
+
+/** 关注时间：优先 followed_at（关注接口给的），回退订阅行的 created_at。 */
+function followedMs(row: { followed_at?: string | null; created_at?: string | null }): number {
+  // 后端给的是不带时区的 UTC 串，直接 new Date 会被当成本地时间而偏移 8 小时。
+  return utcMs(row.followed_at) ?? utcMs(row.created_at) ?? 0
+}
+
+function rowName(row: { author_name?: string; title?: string; remote_id: string }) {
+  return row.author_name || row.title || row.remote_id
+}
+
+/** 搜索匹配昵称 / 标题 / 平台 ID。空关键词视为不筛选。 */
+function matchesKeyword(row: TrackRow | ArchivedRow, q: string) {
+  if (!q) return true
+  const needle = q.trim().toLowerCase()
+  if (!needle) return true
+  return [rowName(row as TrackRow), (row as TrackRow).remote_id, row.platform, sourceText(row.source_type)]
+    .filter(Boolean)
+    .some((v) => String(v).toLowerCase().includes(needle))
+}
+
 const visibleRows = computed(() => {
   const t = activeType.value
-  if (t === 'all') return accountRows.value
-  return accountRows.value.filter((r) => matchType(r, t))
+  const q = keyword.value
+  const list = accountRows.value.filter((r) => matchType(r, t) && matchesKeyword(r, q))
+  // 排序必须在一份副本上做：直接 sort(accountRows) 会改到 rows 的顺序，
+  // 切账号/切 tab 后顺序就乱了。
+  const sorted = [...list]
+  switch (sortKey.value) {
+    case 'followers':
+      sorted.sort((a, b) => (b.follower_count || 0) - (a.follower_count || 0))
+      break
+    case 'synced':
+      sorted.sort((a, b) => utcMs(b.last_sync_at) - utcMs(a.last_sync_at))
+      break
+    case 'name':
+      sorted.sort((a, b) => rowName(a).localeCompare(rowName(b), 'zh-CN'))
+      break
+    case 'followed':
+    default:
+      // 默认「最新关注」：按关注时间倒序。时间相同（同一批导入）时按 id 倒序，
+      // 保证顺序稳定而不是每帧抖动。
+      sorted.sort((a, b) => followedMs(b) - followedMs(a) || b.id - a.id)
+      break
+  }
+  return sorted
 })
 function isCreator(row: TrackRow) { return row.source_type === 'creator' }
 /** 收藏夹/合集没有头像，用一个几何符号代替，保证卡片结构一致。 */
@@ -814,23 +986,83 @@ function openEdit(row: TrackRow) {
   dialog.value = true
 }
 
-function confirmRemove(row: TrackRow) { removeTarget.value = row }
+function confirmArchive(row: TrackRow) { archiveTarget.value = row }
 
-async function doRemove() {
-  const row = removeTarget.value
+/** 归档 = 软删。素材、博主资料、来源关系全部保留，只是从当前列表移走。 */
+async function doArchive() {
+  const row = archiveTarget.value
   if (!row) return
+  archiving.value = true
   try {
     if (row.source_type === 'creator') {
       await apiCall('unfollow_api_followed_creators__fc_id__delete', { fc_id: row.id })
     } else {
       await apiCall('delete_subscription_api_subscriptions__sub_id__delete', { sub_id: row.id })
     }
-    ElMessage.success('已移除')
-    removeTarget.value = null
+    ElMessage.success(`已归档「${rowName(row)}」，可从「归档」复原`)
+    archiveTarget.value = null
+    archivedCount.value += 1
+    await load()
+    if (archiveOpen.value) await loadArchive()
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.detail || '归档失败')
+  } finally {
+    archiving.value = false
+  }
+}
+
+/** 归档箱里来源种类不同，复原走各自接口；creator 走关注接口才能带回博主资料。 */
+async function restoreRow(row: ArchivedRow) {
+  const token = `${row.kind}-${row.id}`
+  restoring.value = token
+  try {
+    if (row.kind === 'creator') {
+      await apiCall('restore_api_followed_creators__fc_id__restore_post', { fc_id: row.id })
+    } else {
+      await apiCall('restore_subscription_api_subscriptions__sub_id__restore_post', { sub_id: row.id })
+    }
+    ElMessage.success(`已复原「${rowName(row)}」`)
+    archivedRows.value = archivedRows.value.filter((r) => `${r.kind}-${r.id}` !== token)
+    archivedCount.value = archivedRows.value.length
     await load()
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.detail || '移除失败')
+    ElMessage.error(e?.response?.data?.detail || '复原失败')
+  } finally {
+    restoring.value = ''
   }
+}
+
+/**
+ * 读归档列表。``silent`` 用于进页面时预取角标数字：那一次拿不到只该让角标消失，
+ * 不该在用户还没点「归档」的时候先弹一个错误提示。
+ */
+async function loadArchive(silent = false) {
+  archiveLoading.value = true
+  try {
+    const [creators, subs] = await Promise.all([
+      apiCall('list_followed_creators_api_followed_creators_get', { archived: true }),
+      apiCall('list_subscriptions_api_subscriptions_get', { archived: true }),
+    ])
+    const creatorIds = new Set(creators.map((c) => c.id))
+    archivedRows.value = [
+      ...creators.map((c) => ({ ...c, kind: 'creator' as const })),
+      // creator 订阅在订阅接口里也会返回，但那边没有博主资料；只取非 creator 的。
+      ...subs
+        .filter((s) => !creatorIds.has(s.id) && s.source_type !== 'creator')
+        .map((s) => ({ ...s, kind: 'subscription' as const })),
+    ]
+    archivedCount.value = archivedRows.value.length
+  } catch (e: any) {
+    if (!silent) ElMessage.error(e?.response?.data?.detail || '读取归档失败')
+  } finally {
+    archiveLoading.value = false
+  }
+}
+
+async function openArchive() {
+  archiveOpen.value = true
+  archiveKeyword.value = ''
+  await loadArchive()
 }
 
 function resetForm() {
@@ -944,9 +1176,26 @@ function fmt(v: string | null) {
   return formatMonthDayTime(v)
 }
 
+/** 卡片底部那句"关注于 …"。平台没给关注时间，所以措辞是"关注于"而不是"平台关注于"。 */
+function followedLabel(row: TrackRow) {
+  const ms = followedMs(row)
+  if (!ms) return '关注时间未记录'
+  return `关注于 ${formatMonthDayTime(new Date(ms).toISOString())}`
+}
+
+const archivedVisible = computed(() =>
+  archivedRows.value.filter((r) => matchesKeyword(r, archiveKeyword.value)),
+)
+
+function archivedLabel(row: ArchivedRow) {
+  return row.archived_at ? `归档于 ${formatMonthDayTime(row.archived_at)}` : '已归档'
+}
+
 onMounted(async () => {
   await loadAccounts()
   await load()
+  // 归档数只用于按钮上的角标：静默失败即可，不打断首屏。
+  await loadArchive(true)
 })
 </script>
 
@@ -961,7 +1210,71 @@ onMounted(async () => {
   display: flex; align-items: center; gap: 10px;
   padding: 4px 2px; font-size: var(--fs-sm); color: var(--muted);
 }
+/* 说明文字可以缩，开关不能缩：窄卡片上文字先省略，开关始终留在同一行 */
+.relation-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hint { font-size: var(--fs-sm); color: var(--muted); }
+
+/* 筛选行：类型 chips 靠左，搜索与排序靠右。窄屏整行换行，搜索占满。 */
+.filter-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.filter-row .grow { margin-left: auto; }
+.sort-select { width: 128px; flex: none; }
+
+/* 搜索框：方角硬边，和 .ui-chip / .ui-icon-btn 同一套骨架 */
+.find {
+  display: flex; align-items: center; gap: 7px;
+  padding: 0 8px; height: 32px; min-width: 240px;
+  border: 1px solid var(--ink); background: var(--surface);
+  transition: box-shadow .14s ease-out;
+}
+.find:focus-within { box-shadow: 0 0 0 2px var(--accent) inset; }
+.find-ic { color: var(--muted); font-size: 14px; flex: none; }
+.find-input {
+  flex: 1; min-width: 0; border: 0; outline: 0; background: none;
+  font-family: inherit; font-size: var(--fs-sm); color: var(--ink);
+}
+.find-input::placeholder { color: var(--muted); }
+/* 去掉 WebKit 自带的搜索清除按钮，用我们自己的方角 × */
+.find-input::-webkit-search-cancel-button { display: none; }
+.find-clear {
+  flex: none; border: 0; background: none; cursor: pointer;
+  color: var(--muted); font-size: 16px; line-height: 1; padding: 0 2px;
+}
+.find-clear:hover { color: var(--ink); }
+
+/* 归档箱：内容区自己滚动，头部和搜索框固定，归档多了也不会把"关闭"顶出去 */
+.archive-box { width: min(760px, 100%); }
+.archive-body { padding-top: 0; }
+.archive-search {
+  display: flex; align-items: center; gap: 7px;
+  margin: 0 var(--sp-5) var(--sp-3);
+  padding: 0 8px; height: 32px;
+  border: 1px solid var(--ink); background: var(--surface);
+}
+.archive-search:focus-within { box-shadow: 0 0 0 2px var(--accent) inset; }
+.archive-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.archive-item {
+  display: flex; align-items: center; gap: 12px;
+  padding: 9px 10px;
+  border: 1px solid var(--line-soft); background: var(--surface-2);
+}
+.archive-item .ava { flex: none; }
+.archive-meta { min-width: 0; flex: 1; }
+.archive-meta .name {
+  display: flex; align-items: center; gap: 6px;
+  font-weight: 700; min-width: 0;
+}
+.archive-meta .name > span:first-child {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.archive-meta .stats { font-size: var(--fs-sm); color: var(--muted); margin-top: 2px; }
+.archive-meta .sep { margin: 0 5px; opacity: .6; }
+.archive-empty { padding: var(--sp-6) 0; text-align: center; color: var(--muted); }
+.archive-empty .big { font-size: var(--fs-lg); font-weight: 700; color: var(--ink); margin-bottom: 6px; }
+.archive-empty p { margin: 0; font-size: var(--fs-sm); }
+@media (max-width: 720px) {
+  .find { min-width: 0; flex: 1 1 100%; order: 3; }
+  .sort-select { width: 112px; }
+}
 .grid-wrap { display: flex; flex-direction: column; gap: 16px; }
 .ui-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
 .ui-card {
@@ -997,6 +1310,8 @@ onMounted(async () => {
   background: var(--surface-3); border: 1px solid var(--ink);
   font-size: 22px; color: var(--ink-2);
 }
+/* 收藏夹/合集没有主页可点，覆盖掉上面博主的 pointer 光标 */
+.ui-card .ava.src-ava { cursor: default; }
 .ui-card .name .type { font-weight: 600; }
 .ui-card .name { display: flex; align-items: center; gap: 6px; font-weight: 700; min-width: 0; }
 .ui-card .name a { color: inherit; text-decoration: none; }
@@ -1017,6 +1332,13 @@ onMounted(async () => {
   margin-left: 5px; font-size: 11px; font-weight: 700;
   padding: 0 4px; background: var(--accent-soft); color: var(--accent);
 }
+/* tab 上的条数：贴近文字，弱化到不抢平台名 */
+.tab-n {
+  margin-left: 6px; font-size: var(--fs-xs); font-weight: 700;
+  font-variant-numeric: tabular-nums; color: var(--muted);
+}
+/* 卡片头像：点击进主页，光标提示可点；尺寸由 Avatar 组件内联决定 */
+.ui-card .ava { flex: none; cursor: pointer; }
 .detail { margin-left: 8px; font-size: var(--fs-sm); color: var(--muted); }
 
 /* 设置弹窗分节标题 */

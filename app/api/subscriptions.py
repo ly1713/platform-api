@@ -7,7 +7,7 @@
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -141,6 +141,10 @@ class SubscriptionOut(BaseModel):
     auto_transcribe: bool | None = None
     auto_analyze: bool | None = None
     last_sync_at: datetime | None = None
+    # 关注时间 = 这一行第一次入库的时间。平台不返回关注时间戳（抖音/B站的关注
+    # 列表接口都没有这个字段），所以这是关注列表"最新关注"排序的唯一真实依据。
+    # 收藏夹/合集也用同一个字段排序，前端不必为两类行写两套排序键。
+    created_at: datetime | None = None
     deleted_at: datetime | None = None
     # creator 订阅即"关注的博主"；其头像供列表直接显示
     creator_avatar: str = ""
@@ -174,9 +178,15 @@ async def remote_sources(account_id: int, source_type: str = "favorite", db: Ses
 
 
 @router.get("/subscriptions", response_model=list[SubscriptionOut])
-def list_subscriptions(db: Session = Depends(get_db)):
+def list_subscriptions(
+    archived: bool = Query(False, description="true = 只返回已归档的订阅"),
+    db: Session = Depends(get_db),
+):
+    condition = (
+        Subscription.deleted_at.is_not(None) if archived else Subscription.deleted_at.is_(None)
+    )
     subs = db.scalars(
-        select(Subscription).where(Subscription.deleted_at.is_(None)).order_by(Subscription.id)
+        select(Subscription).where(condition).order_by(Subscription.id)
     ).all()
     # creator 订阅补博主头像（资料在 creator_profile；关系状态就在 subscription 本身）
     creator_subs = [s for s in subs if s.source_type == "creator"]
@@ -301,6 +311,29 @@ def delete_subscription(sub_id: int, db: Session = Depends(get_db)):
     sub.deleted_at = datetime.utcnow()
     db.commit()
     return {"ok": True, "deactivated_sources": len(sources), "kept_contents": len(sources)}
+
+
+@router.post("/subscriptions/{sub_id}/restore", response_model=SubscriptionOut)
+def restore_subscription(sub_id: int, db: Session = Depends(get_db)):
+    """从归档复原一条订阅（收藏夹/合集等）。
+
+    与关注列表的复原同一套语义：清 ``deleted_at``、重新启用来源关系、
+    保留用户的其它设置。``creator`` 订阅请走
+    ``POST /api/followed-creators/{id}/restore``（那边还要合成博主资料）。
+    """
+    sub = db.get(Subscription, sub_id)
+    if sub is None:
+        raise HTTPException(status_code=404, detail="订阅不存在")
+    if sub.deleted_at is None:
+        raise HTTPException(status_code=409, detail="该订阅不在归档中，无需复原")
+    sub.deleted_at = None
+    sub.enabled = True
+    sources = db.scalars(select(ContentSource).where(ContentSource.subscription_id == sub.id)).all()
+    for source in sources:
+        source.active = True
+    db.commit()
+    db.refresh(sub)
+    return sub
 
 
 @router.post("/subscriptions/{sub_id}/sync", status_code=202, response_model=schemas.JobRefOut)

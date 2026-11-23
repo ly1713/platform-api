@@ -791,6 +791,8 @@ export interface FollowedCreatorOut {
   "sync_videos"?: boolean
   "full_sync"?: boolean
   "last_synced_at"?: string | null
+  "followed_at"?: string | null
+  "archived_at"?: string | null
 }
 
 /** FollowedRefreshOut */
@@ -1446,6 +1448,7 @@ export interface SubscriptionOut {
   "auto_transcribe"?: boolean | null
   "auto_analyze"?: boolean | null
   "last_sync_at"?: string | null
+  "created_at"?: string | null
   "deleted_at"?: string | null
   "creator_avatar"?: string
 }
@@ -1843,6 +1846,9 @@ export interface ApiPaths {
     "PUT": "update_followed_creator_api_followed_creators__fc_id__put"
     "DELETE": "unfollow_api_followed_creators__fc_id__delete"
   }
+  "/api/followed-creators/{fc_id}/restore": {
+    "POST": "restore_api_followed_creators__fc_id__restore_post"
+  }
   "/api/followed-creators/{fc_id}/sync": {
     "POST": "sync_now_api_followed_creators__fc_id__sync_post"
   }
@@ -2003,6 +2009,9 @@ export interface ApiPaths {
     "PATCH": "patch_subscription_api_subscriptions__sub_id__patch"
     "DELETE": "delete_subscription_api_subscriptions__sub_id__delete"
   }
+  "/api/subscriptions/{sub_id}/restore": {
+    "POST": "restore_subscription_api_subscriptions__sub_id__restore_post"
+  }
   "/api/subscriptions/{sub_id}/runs": {
     "GET": "sync_runs_api_subscriptions__sub_id__runs_get"
   }
@@ -2131,6 +2140,7 @@ export type list_followed_creators_api_followed_creators_getResponse = FollowedC
 export type refresh_api_followed_creators_refresh_postResponse = FollowedRefreshOut
 export type update_followed_creator_api_followed_creators_fc_id_putResponse = FollowedCreatorOut
 export type unfollow_api_followed_creators_fc_id_deleteResponse = UnfollowOut
+export type restore_api_followed_creators_fc_id_restore_postResponse = FollowedCreatorOut
 export type sync_now_api_followed_creators_fc_id_sync_postResponse = JobRefOut
 export type import_article_api_imports_wechat_article_postResponse = ArticleImportOut
 export type list_assignments_api_model_access_assignments_getResponse = AssignmentListOut
@@ -2174,6 +2184,7 @@ export type create_subscription_api_subscriptions_postResponse = SubscriptionOut
 export type update_subscription_api_subscriptions_sub_id_putResponse = SubscriptionOut
 export type patch_subscription_api_subscriptions_sub_id_patchResponse = SubscriptionOut
 export type delete_subscription_api_subscriptions_sub_id_deleteResponse = SubscriptionDeletedOut
+export type restore_subscription_api_subscriptions_sub_id_restore_postResponse = SubscriptionOut
 export type sync_runs_api_subscriptions_sub_id_runs_getResponse = SyncRunOut[]
 export type sync_run_detail_api_subscriptions_sub_id_runs_run_id_getResponse = SyncRunOut
 export type trigger_sync_api_subscriptions_sub_id_sync_postResponse = JobRefOut
@@ -2257,6 +2268,7 @@ export interface ApiResponses {
   "refresh_api_followed_creators_refresh_post": refresh_api_followed_creators_refresh_postResponse
   "update_followed_creator_api_followed_creators__fc_id__put": update_followed_creator_api_followed_creators_fc_id_putResponse
   "unfollow_api_followed_creators__fc_id__delete": unfollow_api_followed_creators_fc_id_deleteResponse
+  "restore_api_followed_creators__fc_id__restore_post": restore_api_followed_creators_fc_id_restore_postResponse
   "sync_now_api_followed_creators__fc_id__sync_post": sync_now_api_followed_creators_fc_id_sync_postResponse
   "import_article_api_imports_wechat_article_post": import_article_api_imports_wechat_article_postResponse
   "list_assignments_api_model_access_assignments_get": list_assignments_api_model_access_assignments_getResponse
@@ -2300,6 +2312,7 @@ export interface ApiResponses {
   "update_subscription_api_subscriptions__sub_id__put": update_subscription_api_subscriptions_sub_id_putResponse
   "patch_subscription_api_subscriptions__sub_id__patch": patch_subscription_api_subscriptions_sub_id_patchResponse
   "delete_subscription_api_subscriptions__sub_id__delete": delete_subscription_api_subscriptions_sub_id_deleteResponse
+  "restore_subscription_api_subscriptions__sub_id__restore_post": restore_subscription_api_subscriptions_sub_id_restore_postResponse
   "sync_runs_api_subscriptions__sub_id__runs_get": sync_runs_api_subscriptions_sub_id_runs_getResponse
   "sync_run_detail_api_subscriptions__sub_id__runs__run_id__get": sync_run_detail_api_subscriptions_sub_id_runs_run_id_getResponse
   "trigger_sync_api_subscriptions__sub_id__sync_post": trigger_sync_api_subscriptions_sub_id_sync_postResponse
@@ -2604,6 +2617,9 @@ export interface ApiPathParams {
   "unfollow_api_followed_creators__fc_id__delete": {
   "fc_id": number
 }
+  "restore_api_followed_creators__fc_id__restore_post": {
+  "fc_id": number
+}
   "sync_now_api_followed_creators__fc_id__sync_post": {
   "fc_id": number
 }
@@ -2688,6 +2704,9 @@ export interface ApiPathParams {
   "delete_subscription_api_subscriptions__sub_id__delete": {
   "sub_id": number
 }
+  "restore_subscription_api_subscriptions__sub_id__restore_post": {
+  "sub_id": number
+}
   "sync_runs_api_subscriptions__sub_id__runs_get": {
   "sub_id": number
 }
@@ -2761,6 +2780,7 @@ export interface ApiQueryParams {
   "list_followed_creators_api_followed_creators_get": {
   "platform"?: string | null
   "account_id"?: number | null
+  "archived"?: boolean
 }
   "list_calls_api_model_access_calls_get": {
   "work_type"?: string | null
@@ -2805,6 +2825,9 @@ export interface ApiQueryParams {
   "skill_list_followed_creators_api_skills_followed_creators_get": {
   "platform"?: string | null
   "account_id"?: number | null
+}
+  "list_subscriptions_api_subscriptions_get": {
+  "archived"?: boolean
 }
   "list_fs_dir_api_system_fs_list_get": {
   "path"?: string
@@ -2888,6 +2911,7 @@ export const apiRoutes = {
   "refresh_api_followed_creators_refresh_post": { method: "POST", path: "/api/followed-creators/refresh" },
   "update_followed_creator_api_followed_creators__fc_id__put": { method: "PUT", path: "/api/followed-creators/{fc_id}" },
   "unfollow_api_followed_creators__fc_id__delete": { method: "DELETE", path: "/api/followed-creators/{fc_id}" },
+  "restore_api_followed_creators__fc_id__restore_post": { method: "POST", path: "/api/followed-creators/{fc_id}/restore" },
   "sync_now_api_followed_creators__fc_id__sync_post": { method: "POST", path: "/api/followed-creators/{fc_id}/sync" },
   "import_article_api_imports_wechat_article_post": { method: "POST", path: "/api/imports/wechat-article" },
   "get_avatar_api_media_avatars__profile_id__get": { method: "GET", path: "/api/media/avatars/{profile_id}" },
@@ -2946,6 +2970,7 @@ export const apiRoutes = {
   "update_subscription_api_subscriptions__sub_id__put": { method: "PUT", path: "/api/subscriptions/{sub_id}" },
   "patch_subscription_api_subscriptions__sub_id__patch": { method: "PATCH", path: "/api/subscriptions/{sub_id}" },
   "delete_subscription_api_subscriptions__sub_id__delete": { method: "DELETE", path: "/api/subscriptions/{sub_id}" },
+  "restore_subscription_api_subscriptions__sub_id__restore_post": { method: "POST", path: "/api/subscriptions/{sub_id}/restore" },
   "sync_runs_api_subscriptions__sub_id__runs_get": { method: "GET", path: "/api/subscriptions/{sub_id}/runs" },
   "sync_run_detail_api_subscriptions__sub_id__runs__run_id__get": { method: "GET", path: "/api/subscriptions/{sub_id}/runs/{run_id}" },
   "trigger_sync_api_subscriptions__sub_id__sync_post": { method: "POST", path: "/api/subscriptions/{sub_id}/sync" },

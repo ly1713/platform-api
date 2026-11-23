@@ -238,6 +238,46 @@
 .ui-panel-head .grow { margin-left: auto; }
 .ui-panel-body { padding: var(--sp-5); }
 
+/* ---------- 弹层（全局唯一实现） ----------
+ * 曾经 `.ui-modal` 是每个页面在 scoped CSS 里各抄一份：复制的页面正常，漏抄的
+ * 页面（关注列表）就退化成文档流末尾的一个普通 div，浮层根本不在视口里，
+ * 按钮点下去像是「没反应」。弹层属于骨架级组件，只能有一份定义，页面只负责
+ * 用 class，不许自己重写。
+ *
+ * 尺寸变体：.narrow（确认框）/ 默认（表单）/ .wide（内容阅读、播放器）。
+ */
+.ui-modal {
+  position: fixed; inset: 0; z-index: 220;
+  background: color-mix(in oklab, var(--ink) 45%, transparent);
+  display: grid; place-items: center;
+  padding: var(--sp-5);
+  animation: ui-modal-fade .16s ease-out;
+}
+.ui-modal-box {
+  width: min(560px, 100%);
+  max-height: min(88vh, 880px);
+  display: flex; flex-direction: column;
+  background: var(--surface);
+  border: 2px solid var(--ink);
+  box-shadow: var(--shadow-2);
+}
+.ui-modal-box.narrow { width: min(480px, 100%); }
+.ui-modal-box.wide { width: min(920px, 100%); }
+.ui-modal-body { padding: var(--sp-5); color: var(--ink-2); overflow: auto; min-height: 0; }
+.ui-modal-body p { margin: 0; }
+.ui-modal-foot {
+  display: flex; justify-content: flex-end; gap: 8px;
+  padding: var(--sp-4) var(--sp-5);
+  border-top: 1px solid var(--line-soft);
+}
+.ui-modal-tip { margin-top: 10px; font-size: var(--fs-sm); color: var(--muted); }
+@keyframes ui-modal-fade { from { opacity: 0 } to { opacity: 1 } }
+@media (prefers-reduced-motion: reduce) { .ui-modal { animation: none; } }
+@media (max-width: 820px) {
+  .ui-modal { padding: var(--sp-3); }
+  .ui-modal-box { max-height: 92vh; }
+}
+
 /* ---------- 表格 ---------- */
 .ui-table { width: 100%; border-collapse: collapse; font-size: var(--fs-md); }
 .ui-table th {
@@ -250,6 +290,8 @@
 .ui-table tr:last-child td { border-bottom: 0; }
 .ui-table tbody tr { transition: background .12s ease-out; }
 .ui-table tbody tr:hover td { background: color-mix(in oklab, var(--accent) 5%, transparent); }
+/* 可展开的行必须给出可点的信号；没有这条，行仍然是"能点但看不出能点" */
+.ui-table tbody tr.clickable { cursor: pointer; }
 .ui-table .num { font-family: var(--font-mono); text-align: right; font-variant-numeric: tabular-nums; }
 .ui-table .strong { color: var(--ink); font-weight: 600; }
 

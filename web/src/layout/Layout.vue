@@ -203,6 +203,9 @@ onUnmounted(() => {
   opacity: 0.85;
 }
 .ui-nav-item.on .ic { opacity: 1; }
+/* 侧栏宽度固定，标题必须单行：换行会把「关键词采集」这类长名字挤成两行，
+   并把下面几项顶出首屏。溢出时由 .ui-nav 纵向滚动兜底。 */
+.ui-nav-item .label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .ui-side-foot { display: flex; flex-direction: column; gap: 8px; }
 .ui-user { color: var(--sidebar-ink-dim); }

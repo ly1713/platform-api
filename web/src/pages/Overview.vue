@@ -711,20 +711,13 @@ onMounted(async () => {
 .cat:hover { transform: translate(-1px, -1px); box-shadow: 3px 3px 0 var(--ink); color: var(--ink); }
 .cat:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--ink); }
 .cat.none { border-style: dashed; border-color: var(--muted); box-shadow: none; color: var(--muted); }
-.cat-count { font-weight: 700; font-variant-numeric: tabular-nums; }
+/* 标签可省略、计数不能被挤掉：长类名先截断，保证右侧数字列对齐 */
+.cat-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cat-count { font-weight: 700; font-variant-numeric: tabular-nums; flex: none; }
 
 .ellip { max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-.ui-modal {
-  position: fixed; inset: 0; z-index: 200;
-  background: color-mix(in oklab, var(--ink) 42%, transparent);
-  display: grid; place-items: center; padding: var(--sp-5);
-}
-.ui-modal-box {
-  width: min(880px, 100%); max-height: 88vh; display: flex; flex-direction: column;
-  background: var(--surface); border: 2px solid var(--ink); box-shadow: var(--shadow-2);
-}
-.ui-modal-body { padding: var(--sp-5); overflow: auto; }
+/* 弹层外观在 ui.css 统一定义；这里只保留本页内容样式 */
 .sec { margin: 18px 0 8px; font-weight: 700; font-size: var(--fs-md); border-left: 4px solid var(--accent); padding-left: 9px; }
 .sec:first-child { margin-top: 0; }
 .rep-metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }

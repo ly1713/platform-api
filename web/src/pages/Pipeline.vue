@@ -386,6 +386,9 @@ onUnmounted(() => {
   padding: 9px 12px; border: 1px solid var(--line); background: var(--surface-2);
   font-size: var(--fs-sm); color: var(--ink-2);
 }
+/* open / closed 是同一个条的两种状态，必须都有落点；只写 closed 会让「开放」
+   状态退回主题默认底色，看起来像"这条没生效"。 */
+.pq-ai.open { border-color: color-mix(in oklab, var(--ok) 40%, var(--line)); background: var(--ok-soft); }
 .pq-ai.closed { border-color: color-mix(in oklab, var(--warn) 45%, var(--line)); background: var(--warn-soft); }
 .pq-ai-next { min-width: 0; }
 .pq-ai-link { margin-left: auto; color: var(--accent-2); font-weight: 600; }

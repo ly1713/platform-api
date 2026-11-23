@@ -455,3 +455,135 @@ def test_reimport_revives_soft_deleted_creator(client, session, monkeypatch):
     assert rows[0].id == sub_id and rows[0].deleted_at is None
     listed = client.get("/api/followed-creators").json()
     assert any(x["id"] == sub_id for x in listed)
+
+
+# ------------------------------------------------------- 归档 / 复原
+
+def test_archive_hides_creator_and_lists_it_in_archive(client, session, monkeypatch):
+    """归档 = 从当前列表消失 + 出现在归档列表里。两处绝不同时出现同一个人。"""
+    from app.modules.bilibili import BilibiliAdapter
+
+    acc = _account(session)
+    monkeypatch.setattr(
+        BilibiliAdapter, "list_followings",
+        _fake_followings([_author("1001", "留下"), _author("1002", "要归档")]),
+    )
+    client.post("/api/followed-creators/refresh", json={"account_id": acc.id})
+    target = session.query(Subscription).filter_by(remote_id="1002").one()
+
+    assert client.delete(f"/api/followed-creators/{target.id}").status_code == 200
+
+    active = client.get("/api/followed-creators").json()
+    assert all(x["id"] != target.id for x in active)
+    assert len(active) == 1
+
+    archived = client.get("/api/followed-creators", params={"archived": "true"}).json()
+    assert [x["id"] for x in archived] == [target.id]
+    # 归档弹窗要显示头像/昵称/粉丝，所以归档行必须带完整博主资料
+    row = archived[0]
+    assert row["author_name"] == "要归档"
+    assert row["avatar_url"]
+    assert row["follower_count"] == 100
+    assert row["archived_at"]
+    assert row["followed_at"]
+
+
+def test_restore_brings_creator_back_and_reactivates_sources(client, session, monkeypatch):
+    """复原：回到当前列表、重新跟踪关注关系、来源关系重新启用。
+
+    归档时停用了 ContentSource，若复原不恢复它，素材还在库里但不再算作这段关注的来源。
+    """
+    from app.models import ContentItem, ContentSource
+    from app.modules.bilibili import BilibiliAdapter
+
+    acc = _account(session)
+    monkeypatch.setattr(BilibiliAdapter, "list_followings", _fake_followings([_author("1001")]))
+    client.post("/api/followed-creators/refresh", json={"account_id": acc.id})
+    sub = session.query(Subscription).filter_by(source_type="creator").one()
+
+    content = ContentItem(
+        platform="bilibili", external_id="bv1", title="视频", account_id=acc.id,
+    )
+    session.add(content)
+    session.flush()
+    session.add(ContentSource(content_id=content.id, account_id=acc.id, subscription_id=sub.id, active=True))
+    session.commit()
+
+    assert client.delete(f"/api/followed-creators/{sub.id}").status_code == 200
+    session.expire_all()
+    assert session.query(ContentSource).one().active is False
+
+    r = client.post(f"/api/followed-creators/{sub.id}/restore")
+    assert r.status_code == 200, r.text
+    assert r.json()["sync_enabled"] is True
+    assert r.json()["archived_at"] is None
+
+    session.expire_all()
+    assert session.get(Subscription, sub.id).deleted_at is None
+    assert session.query(ContentSource).one().active is True
+    assert any(x["id"] == sub.id for x in client.get("/api/followed-creators").json())
+    assert client.get("/api/followed-creators", params={"archived": "true"}).json() == []
+
+
+def test_restore_keeps_sync_videos_untouched(client, session, monkeypatch):
+    """归档不记录、复原不猜测 sync_videos：用户的意图不能被归档顺手改掉。"""
+    from app.modules.bilibili import BilibiliAdapter
+
+    acc = _account(session)
+    monkeypatch.setattr(BilibiliAdapter, "list_followings", _fake_followings([_author("1001")]))
+    client.post("/api/followed-creators/refresh", json={"account_id": acc.id})
+    sub = session.query(Subscription).filter_by(source_type="creator").one()
+    client.put(f"/api/followed-creators/{sub.id}", json={"sync_videos": True})
+
+    client.delete(f"/api/followed-creators/{sub.id}")
+    client.post(f"/api/followed-creators/{sub.id}/restore")
+
+    session.expire_all()
+    assert session.get(Subscription, sub.id).sync_videos is True
+
+
+def test_restore_is_rejected_when_not_archived(client, session, monkeypatch):
+    from app.modules.bilibili import BilibiliAdapter
+
+    acc = _account(session)
+    monkeypatch.setattr(BilibiliAdapter, "list_followings", _fake_followings([_author("1001")]))
+    client.post("/api/followed-creators/refresh", json={"account_id": acc.id})
+    sub = session.query(Subscription).filter_by(source_type="creator").one()
+    assert client.post(f"/api/followed-creators/{sub.id}/restore").status_code == 409
+
+
+def test_restore_unknown_creator_404(client):
+    assert client.post("/api/followed-creators/99999/restore").status_code == 404
+
+
+def test_archiving_twice_does_not_move_the_archive_timestamp(client, session, monkeypatch):
+    """重复点击归档不该把"归档于"刷新到现在，否则归档列表顺序会乱跳。"""
+    from app.modules.bilibili import BilibiliAdapter
+
+    acc = _account(session)
+    monkeypatch.setattr(BilibiliAdapter, "list_followings", _fake_followings([_author("1001")]))
+    client.post("/api/followed-creators/refresh", json={"account_id": acc.id})
+    sub_id = session.query(Subscription).filter_by(source_type="creator").one().id
+
+    assert client.delete(f"/api/followed-creators/{sub_id}").status_code == 200
+    first = client.get("/api/followed-creators", params={"archived": "true"}).json()[0]["archived_at"]
+    assert client.delete(f"/api/followed-creators/{sub_id}").status_code == 200
+    second = client.get("/api/followed-creators", params={"archived": "true"}).json()[0]["archived_at"]
+    assert first == second
+
+
+def test_followed_at_is_the_subscription_creation_time(client, session, monkeypatch):
+    """关注时间没有平台来源，唯一真实的值是这一行第一次入库的时间。
+
+    抖音/B站的关注列表接口都不返回关注时间戳，所以这里钉住"用 created_at"这个
+    决定：将来若有人加一个假的 follow_time 字段，这个测试会提醒他先证明来源。
+    """
+    from app.modules.bilibili import BilibiliAdapter
+
+    acc = _account(session)
+    monkeypatch.setattr(BilibiliAdapter, "list_followings", _fake_followings([_author("1001")]))
+    client.post("/api/followed-creators/refresh", json={"account_id": acc.id})
+    sub = session.query(Subscription).filter_by(source_type="creator").one()
+
+    followed_at = client.get("/api/followed-creators").json()[0]["followed_at"]
+    assert followed_at == sub.created_at.isoformat()

@@ -1110,6 +1110,11 @@ class FollowedCreatorOut(BaseModel):
     sync_videos: bool = False
     full_sync: bool = False
     last_synced_at: str | None = None
+    # 关注时间 = 本系统首次见到这段关注的时间（订阅行创建时间）。平台不返回关注
+    # 时间戳，抖音/B站的关注列表接口都没有这个字段，所以这是唯一真实的来源。
+    followed_at: str | None = None
+    # 非空 = 已归档（软删）。归档的博主只在 ``archived=true`` 时返回。
+    archived_at: str | None = None
 
 
 class FollowedRefreshOut(BaseModel):

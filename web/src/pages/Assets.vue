@@ -196,7 +196,7 @@
 
     <!-- 视频播放器（走 Range 流式接口，可拖进度条） -->
     <div v-if="player" class="ui-modal" @click.self="player = null">
-      <div class="ui-modal-box player-box">
+      <div class="ui-modal-box wide player-box">
         <div class="ui-panel-head">
           <h2>{{ player.title || '（无标题）' }}</h2>
           <div class="grow" />
@@ -221,7 +221,7 @@
 
     <!-- 文章阅读视图 -->
     <div v-if="article" class="ui-modal article-modal" @click.self="article = null">
-      <div class="ui-modal-box">
+      <div class="ui-modal-box wide">
         <div class="ui-panel-head">
           <h2>{{ article.title }}</h2>
           <div class="grow" />
@@ -1608,16 +1608,7 @@ onUnmounted(() => {
 .dt-actions { margin-top: 14px; }
 .dt-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 
-/* 播放器 / 文章阅读 */
-.ui-modal {
-  position: fixed; inset: 0; z-index: 200;
-  background: color-mix(in oklab, var(--ink) 55%, transparent);
-  display: grid; place-items: center; padding: var(--sp-5);
-}
-.ui-modal-box {
-  width: min(920px, 100%); max-height: 90vh; display: flex; flex-direction: column;
-  background: var(--surface); border: 2px solid var(--ink); box-shadow: var(--shadow-2);
-}
+/* 播放器 / 文章阅读：弹层外观在 ui.css 统一定义，本页只加 .wide 变体 */
 .player-wrap { background: oklch(0.12 0 0); display: grid; place-items: center; }
 .player-wrap video { width: 100%; max-height: 64vh; display: block; }
 .player-meta { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: var(--sp-3) var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }

@@ -12,16 +12,17 @@
   刷新不会改动已有记录的开关。
 
 接口：
-- GET    /api/followed-creators            列出我关注的博主（按账号/平台过滤）
+- GET    /api/followed-creators            列出我关注的博主（``archived=true`` 列归档）
 - POST   /api/followed-creators/refresh    从平台拉关注列表并入库（带缓存 + 风控冷却）
 - PUT    /api/followed-creators/{id}       {sync_enabled, sync_videos, full_sync} → 写订阅
 - POST   /api/followed-creators/{id}/sync  立即同步
-- DELETE /api/followed-creators/{id}       取消关注
+- DELETE /api/followed-creators/{id}       归档（软删，可在归档弹窗里复原）
+- POST   /api/followed-creators/{id}/restore  从归档复原
 """
 
 from datetime import datetime
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -30,7 +31,7 @@ from app import schemas
 from app.core import fetch_cache, security
 from app.core.crypto import decrypt_credential
 from app.db import get_db
-from app.models import CreatorProfile, PlatformAccount, Subscription
+from app.models import ContentSource, CreatorProfile, PlatformAccount, Subscription
 from app.modules import get_adapter
 from app.services.foundation import follower_count_of, upsert_creator
 from app.application.commands.sync import SyncCommandError, enqueue_sync
@@ -86,14 +87,31 @@ def _out(sub: Subscription, profile: CreatorProfile | None) -> dict:
         "sync_videos": sub.sync_videos,
         "full_sync": not sub.only_new,
         "last_synced_at": sub.last_sync_at.isoformat() if sub.last_sync_at else None,
+        # 关注时间用「这一行第一次入库的时间」= Subscription.created_at。
+        #
+        # 平台没有给我们更准的东西：抖音的关注列表响应里只有粉丝数/昵称/头像，
+        # 没有关注时间字段（creator_profile.raw 里 create_time 是**博主**的建号时间，
+        # 不是"我关注他"的时间）；B站 list_followings 返回的 FollowedUpper 也只有
+        # mid/uname/face/sign。所以这里给的是本系统首次见到这段关注的时间。
+        # 首次导入之后的顺序是准的；整批历史关注的先后无法区分，只能按导入批次。
+        "followed_at": sub.created_at.isoformat() if sub.created_at else None,
+        "archived_at": sub.deleted_at.isoformat() if sub.deleted_at else None,
     }
 
 
-def _creator_subs(db: Session) -> list[Subscription]:
+def _creator_subs(db: Session, *, archived: bool = False) -> list[Subscription]:
+    """creator 订阅行。``archived`` 决定看活着的还是归档的，两者绝不同时返回。
+
+    归档 = ``deleted_at`` 非空（软删）。素材、博主资料、来源关系全部保留，
+    所以复原只是把 ``deleted_at`` 清掉，不需要重建任何东西。
+    """
+    condition = (
+        Subscription.deleted_at.is_not(None) if archived else Subscription.deleted_at.is_(None)
+    )
     return list(
         db.scalars(
             select(Subscription)
-            .where(Subscription.source_type == "creator", Subscription.deleted_at.is_(None))
+            .where(Subscription.source_type == "creator", condition)
             .order_by(Subscription.id)
         ).all()
     )
@@ -101,16 +119,23 @@ def _creator_subs(db: Session) -> list[Subscription]:
 
 @router.get("", response_model=list[schemas.FollowedCreatorOut])
 def list_followed_creators(
-    platform: str | None = None, account_id: int | None = None, db: Session = Depends(get_db)
+    platform: str | None = None,
+    account_id: int | None = None,
+    archived: bool = Query(False, description="true = 列出已归档的博主（用于归档弹窗）"),
+    db: Session = Depends(get_db),
 ):
-    rows = _creator_subs(db)
+    rows = _creator_subs(db, archived=archived)
     if platform:
         rows = [r for r in rows if r.platform == platform]
     if account_id:
         rows = [r for r in rows if r.account_id == account_id]
     profiles = _profile_map(db, rows)
-    # 有头像的排前面（资料未补全的靠后）
-    rows.sort(key=lambda r: (not bool((profiles.get((r.platform, r.remote_id)) or CreatorProfile()).avatar), r.id))
+    if archived:
+        # 归档弹窗按"最近归档的在前"排，刚归档的那位一眼能看到。
+        rows.sort(key=lambda r: (r.deleted_at, r.id), reverse=True)
+    else:
+        # 列表顺序交给前端按用户选的排序键处理；这里只保证稳定输出。
+        rows.sort(key=lambda r: r.id)
     return [_out(r, profiles.get((r.platform, r.remote_id))) for r in rows]
 
 
@@ -295,9 +320,17 @@ class ToggleIn(BaseModel):
     sync_videos: bool | None = None
 
 
-def _get_creator_sub(fc_id: int, db: Session) -> Subscription:
+def _get_creator_sub(fc_id: int, db: Session, *, allow_archived: bool = False) -> Subscription:
+    """取一条 creator 订阅。默认只接受"活着"的行。
+
+    ``allow_archived`` 给归档/复原用：这两个动作本来就是针对已归档的行，
+    若沿用默认过滤，归档接口会对一条已经归档的行返回 404（重复点击就报错），
+    复原接口则永远找不到要复原的那一行。
+    """
     sub = db.get(Subscription, fc_id)
-    if sub is None or sub.source_type != "creator" or sub.deleted_at is not None:
+    if sub is None or sub.source_type != "creator":
+        raise HTTPException(status_code=404, detail="关注博主不存在")
+    if not allow_archived and sub.deleted_at is not None:
         raise HTTPException(status_code=404, detail="关注博主不存在")
     return sub
 
@@ -339,20 +372,50 @@ async def sync_now(fc_id: int, db: Session = Depends(get_db)):
 
 @router.delete("/{fc_id}", response_model=schemas.UnfollowOut)
 def unfollow(fc_id: int, db: Session = Depends(get_db)):
-    """取消关注：软删该 creator 订阅，并停用其来源关系（已入库素材一律保留）。
+    """归档：软删该 creator 订阅，并停用其来源关系（已入库素材一律保留）。
 
     与 `DELETE /api/subscriptions/{id}` 保持同一保留策略（设计 v0.4「删得稳」）：
-    取消关注/删订阅/删账号都只停用来源，绝不物理删除素材或内容。
-    """
-    from app.models import ContentSource
+    归档/删订阅/删账号都只停用来源，绝不物理删除素材或内容。
 
-    sub = _get_creator_sub(fc_id, db)
+    归档**不动** ``sync_videos``：复原时要回到用户原来设的样子，
+    这个开关是用户的意图，不是归档状态的一部分。``enabled`` 会被置 False
+    （停掉对这段关注关系的跟踪），复原时恢复为 True。
+    """
+    sub = _get_creator_sub(fc_id, db, allow_archived=True)
     sources = db.scalars(
         select(ContentSource).where(ContentSource.subscription_id == sub.id)
     ).all()
     for source in sources:
         source.active = False
     sub.enabled = False
-    sub.deleted_at = datetime.utcnow()
+    # 重复归档不应刷新时间戳：否则归档弹窗里那条"归档于"会一直往后跳。
+    if sub.deleted_at is None:
+        sub.deleted_at = datetime.utcnow()
     db.commit()
     return {"ok": True, "deactivated_sources": len(sources), "kept_contents": len(sources)}
+
+
+@router.post("/{fc_id}/restore", response_model=schemas.FollowedCreatorOut)
+def restore(fc_id: int, db: Session = Depends(get_db)):
+    """从归档复原：清掉 ``deleted_at``，恢复跟踪关系并重新启用来源关系。
+
+    - 复活订阅行：不需要新建任何东西，素材、博主资料、历史同步记录都还在原位。
+    - 重新启用该订阅产生的 ``ContentSource``：归档时被停用，复原要一起恢复，
+      否则素材虽然还在库里，却不再算作这段关注的来源。
+    - ``sync_videos`` 保持原值：归档不修改它，复原也不该顺手打开
+      「同步博主名下视频」这个更重的开关。
+    """
+    sub = _get_creator_sub(fc_id, db, allow_archived=True)
+    if sub.deleted_at is None:
+        raise HTTPException(status_code=409, detail="该博主不在归档中，无需复原")
+    sub.deleted_at = None
+    sub.enabled = True
+    sources = db.scalars(
+        select(ContentSource).where(ContentSource.subscription_id == sub.id)
+    ).all()
+    for source in sources:
+        source.active = True
+    db.commit()
+    db.refresh(sub)
+    profiles = _profile_map(db, [sub])
+    return _out(sub, profiles.get((sub.platform, sub.remote_id)))

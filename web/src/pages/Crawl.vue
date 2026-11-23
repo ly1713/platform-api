@@ -409,17 +409,5 @@ onMounted(async () => {
   margin-top: auto; padding-top: 8px; border-top: 1px solid var(--line-soft);
 }
 
-/* 删除确认弹层 */
-.ui-modal {
-  position: fixed; inset: 0; z-index: 200;
-  background: color-mix(in oklab, var(--ink) 45%, transparent);
-  display: grid; place-items: center; padding: var(--sp-5);
-}
-.ui-modal-box { background: var(--surface); border: 2px solid var(--ink); box-shadow: var(--shadow-2); width: min(480px, 100%); }
-.ui-modal-body { padding: var(--sp-5); color: var(--ink-2); }
-.ui-modal-body p { margin: 0; }
-.ui-modal-foot {
-  display: flex; justify-content: flex-end; gap: 8px;
-  padding: var(--sp-4) var(--sp-5); border-top: 1px solid var(--line-soft);
-}
+/* 删除确认弹层的外观在 ui.css 统一定义（.ui-modal / .narrow） */
 </style>
