@@ -205,6 +205,16 @@ async def _janitor() -> None:
             recovered = recover_pending_deletions(db)
             if recovered:
                 logger.info("恢复中断的素材删除任务 %s 个", recovered)
+            # 外部 agent 认领后失联的素材：还回队列，或用尽次数后落成可见 error /
+            # 平台兜底。没有这一步，那条素材会永远显示「等待外部 Agent 处理」。
+            from app.services.breakdown_claim import reconcile_claims
+
+            claims = reconcile_claims(db)
+            if any(claims.values()):
+                logger.info(
+                    "拆解租约回收 released=%s exhausted=%s fallback=%s",
+                    claims["released"], claims["exhausted"], claims["fallback"],
+                )
             from app.services.foundation import purge_old_task_logs
 
             # 无任务时也要留下存活证据：诊断页用最后心跳判断“worker 在但空闲”

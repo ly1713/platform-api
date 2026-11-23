@@ -62,6 +62,20 @@ def _session(_engine):
     return sessionmaker(bind=_engine)()
 
 
+def _use_internal(db):
+    """把执行器切成 internal（平台自己入队跑模型）。
+
+    执行器默认已改为 ``external``（外部 agent 认领），本文件里若干用例断言的
+    是**内部链路**行为（入队 transcribe / 写 PipelineStep / 跑 handler）。显式
+    设置而不是放宽断言：外部模式的行为由 test_breakdown_dispatch.py 单独覆盖，
+    两边都要有，不能靠默认值碰运气。
+    """
+    from app.models import SystemSetting
+
+    db.add(SystemSetting(key="breakdown_executor", value="internal"))
+    db.commit()
+
+
 # ============================================================
 # 鉴权
 # ============================================================
@@ -89,6 +103,7 @@ def test_post_breakdown_enqueues(client, _engine):
     db = _session(_engine)
     _, asset = _seed_asset(db)
     asset_id = asset.id
+    _use_internal(db)
     db.close()
 
     r = client.post(f"/api/assets/{asset_id}/breakdown", json={})
@@ -113,6 +128,7 @@ def test_post_breakdown_force_payload(client, _engine):
     db = _session(_engine)
     _, asset = _seed_asset(db)
     asset_id = asset.id
+    _use_internal(db)
     db.close()
 
     assert client.post(f"/api/assets/{asset_id}/breakdown", json={"force": True}).status_code == 200
@@ -132,6 +148,7 @@ def test_post_breakdown_force_string_false_normalized(client, _engine):
     db = _session(_engine)
     _, asset = _seed_asset(db)
     asset_id = asset.id
+    _use_internal(db)
     db.close()
 
     client.post(f"/api/assets/{asset_id}/breakdown", json={"force": "false"})
@@ -434,6 +451,7 @@ def test_breakdown_endpoint_end_to_end_done(client, _engine, monkeypatch):
     db = _session(_engine)
     _, asset = _seed_asset(db)
     asset_id = asset.id
+    _use_internal(db)
     from app.models import SystemSetting, Transcript, VideoUnderstanding
 
     db.add(SystemSetting(key="breakdown_prompt", value="m"))

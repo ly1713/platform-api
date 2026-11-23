@@ -462,14 +462,38 @@
           产出「为什么火 + 怎么复刻」。它比「分析」速览更慢、更费 token，但结论更完整。
         </p>
         <div class="bd-actions">
-          <el-button size="small" type="primary" :loading="bdBusy" :disabled="bdBusy || isBdActive()" @click="runBreakdown(!!breakdown)">
+          <el-button
+            size="small"
+            type="primary"
+            :loading="bdBusy"
+            :disabled="bdBusy || isBdActive() || !!bdClaim"
+            @click="runBreakdown(!!breakdown)"
+          >
             {{ breakdown ? '重新拆解' : '生成爆款拆解' }}
           </el-button>
-          <el-tag v-if="isBdActive()" size="small" type="warning">拆解中…</el-tag>
+          <el-tag v-if="bdClaim" size="small" type="warning">已认领</el-tag>
+          <el-tag v-else-if="isBdActive()" size="small" type="warning">
+            {{ bdExternal ? '等待外部处理' : '拆解中…' }}
+          </el-tag>
           <el-tag v-else-if="bdStatus === 'waiting_prerequisite'" size="small" type="info">等待前置步骤</el-tag>
           <el-tag v-else-if="bdStatus === 'error'" size="small" type="danger">失败</el-tag>
           <span class="c-meta">复用转录 / 视频理解 / 评论 / 指标，产出「为什么火 + 怎么复刻」</span>
         </div>
+
+        <!-- 外部认领中：按钮禁用必须给出原因，否则用户只会反复点、以为点了没反应 -->
+        <p v-if="bdClaim" class="bd-state bd-state-claim">
+          <b>{{ bdClaim.agent_name }}</b> 已接管这条素材，租约剩余
+          <b>{{ bdClaim.remaining_minutes }}</b> 分钟（到期未被接管前，平台不会再排给它人）。
+          这期间按钮不可用：重复触发只会产生一条排队记录，不会加快结果。
+        </p>
+        <!-- 外部等待态：不能用 isBdActive() 判定。页面重新打开时 bdRequested 为
+             false、状态是 pending，isBdActive() 恰好为 false——最需要说明「为什么
+             没动」的时刻反而一句话都没有。按执行器 + 状态判断才覆盖得到。 -->
+        <p v-else-if="bdExternal && bdWaitingExternal" class="bd-state">
+          等待外部 Agent 认领。平台已经把料准备好（转录、视频理解、指标、评论），
+          外部认领后按契约回传报告。没人认领时到点会自动回收，不需要你处理。
+          <router-link to="/ai">查看怎么接入 Agent</router-link>
+        </p>
         <p v-if="bdStatus === 'waiting_prerequisite'" class="dt-hint">
           拆解需要先完成转录和视频理解；完成后会自动继续，不需要重复点击。
         </p>
@@ -481,7 +505,14 @@
             <div class="bd-verdict">
               <p class="bd-verdict-text">{{ breakdown.verdict || '（无结论）' }}</p>
               <p class="c-meta">
-                模型 {{ breakdown.model || '—' }} · 提示词 {{ breakdown.prompt_version || '—' }}
+                <!-- 产出方必须显示：同一条素材可能先后被外部 agent 与平台兜底跑过，
+                     只说「模型」会让用户分不清这份报告是谁做的、能不能信这个契约版本。 -->
+                <span class="producer" :class="{ ext: isExternalReport, fb: isFallbackReport }">
+                  {{ producerLabel }}
+                </span>
+                · 模型 {{ breakdown.model || '—' }}
+                <template v-if="breakdown.prompt_version"> · 提示词 {{ breakdown.prompt_version }}</template>
+                <template v-if="breakdown.contract_version"> · 契约 {{ breakdown.contract_version }}</template>
                 <el-tag v-if="breakdown.understanding_available === false" size="small" type="warning">无视频理解（降级报告）</el-tag>
               </p>
             </div>
@@ -754,10 +785,15 @@ const breakdown = ref<any>(null)
 const bdStatus = ref('')
 const bdError = ref('')
 const bdBusy = ref(false)
+// 外部认领状态（谁在做、还剩多久）。非空即「已接管」，按钮要禁用并说明原因。
+const bdClaim = ref<{ agent_name: string; remaining_minutes: number; lease_until: string | null; attempts: number } | null>(null)
+// 当前执行器。来自同一条 GET 响应，避免再调一次设置接口而出现状态不一致的窗口。
+const bdExternal = ref(false)
 // 本次会话是否已点过「生成/重新拆解」。GET 对「从未生成」也返回 pending，
 // 靠它区分「排队中」与「尚未生成」，避免未请求就显示「拆解中」（UX 修正）。
 const bdRequested = ref(false)
 let bdTimer: number | undefined
+let bdInterval = 0
 
 // 加工中状态：需轮询等待 worker 完成。
 const ACTIVE_STATUS = ['pending', 'doing']
@@ -783,12 +819,54 @@ function isBdActive() {
 }
 function stopBdPoll() {
   if (bdTimer) { clearInterval(bdTimer); bdTimer = undefined }
+  bdInterval = 0
 }
+
+/** 外部模式下的「排队中」：没人认领，也不是本地在跑。
+ *
+ * 单独成一个判断，因为三处地方要用同一套口径：状态说明文案、轮询节奏、
+ * 按钮可用性。任何一处换成 ``isBdActive()``，重新打开页面时都会判错
+ * （``bdRequested`` 只在本次会话点过按钮后才为 true）。
+ */
+const bdWaitingExternal = computed(
+  () => bdExternal.value && bdStatus.value === 'pending' && !bdClaim.value,
+)
+
+/** 报告是不是外部 Agent 交的。``produced_by`` 形如 ``external:<agent>``。 */
+const isExternalReport = computed(() => (breakdown.value?.produced_by || '').startsWith('external:'))
+/** 报告是不是「外部没人回传、平台补跑」的那一份。 */
+const isFallbackReport = computed(() => (breakdown.value?.produced_by || '') === 'internal:fallback')
+
+/** 产出方的一句话标签。
+ *
+ * 平台正常 / 平台兜底 / 外部（附 agent 名）三种含义完全不同：兜底那份要让
+ * 用户知道「外部没人接，平台自己做了」，否则会误以为外部链路一直正常。
+ */
+const producerLabel = computed(() => {
+  const raw = breakdown.value?.produced_by || ''
+  if (raw.startsWith('external:')) return `外部 Agent · ${raw.slice('external:'.length) || '未知'}`
+  if (raw === 'internal:fallback') return '平台兜底（外部无人回传）'
+  if (raw === 'internal') return '平台模型'
+  return raw ? `产出方 ${raw}` : '产出方未知'
+})
 function syncBdTimer() {
+  // 平台自己在前置（转录/理解）里干活：这部分变化快，用户盯着进度。
   const hasInFlightStep = pipelineSteps.value.some((step: any) =>
     ['queued', 'running', 'ready'].includes(step.status))
-  if (drawer.value && detail.value && (isBdActive() || hasInFlightStep)) {
-    if (!bdTimer) bdTimer = window.setInterval(() => loadBreakdown(detail.value.asset_id), 3000)
+  // 外部模式下有两种「等」都要继续看：没人认领（要发现有人接单）和已被认领
+  // （要发现报告回来了）。
+  const waitingOnAgent = bdExternal.value && (bdWaitingExternal.value || !!bdClaim.value)
+  // 关键：认领后 bdStatus 是 doing，``isBdActive()`` 为 true——但它表示
+  // 「某个外部 Agent 在做」，不是「本机在跑」。按 isBdActive() 给 3 秒会让
+  // 页面在等别人干活时每 3 秒刷一次接口，既白耗请求，也让「等待」看起来像在忙。
+  const localWork = !waitingOnAgent && (isBdActive() || hasInFlightStep)
+  // 本机在跑：3 秒。等外部：15 秒（认领/回传是分钟级的）。
+  const want = localWork ? 3000 : waitingOnAgent ? 15000 : 0
+  if (want && drawer.value && detail.value) {
+    if (bdTimer && bdInterval === want) return
+    stopBdPoll()
+    bdInterval = want
+    bdTimer = window.setInterval(() => loadBreakdown(detail.value.asset_id), want)
   } else {
     stopBdPoll()
   }
@@ -927,9 +1005,13 @@ async function loadBreakdown(assetId: number) {
   if (data.status === 'done') {
     breakdown.value = data
     bdError.value = ''
+    bdClaim.value = null
+    bdExternal.value = false
   } else {
     breakdown.value = null
     bdError.value = data.error || breakdownStep?.error || ''
+    bdClaim.value = data.claim || null
+    bdExternal.value = data.executor === 'external'
   }
   syncBdTimer()
 }
@@ -1157,6 +1239,8 @@ async function openDetail(id: number) {
   bdStatus.value = ''
   bdError.value = ''
   bdRequested.value = false
+  bdClaim.value = null
+  bdExternal.value = false
   await loadBreakdown(id)
   if (!Object.keys(hookCriteria.value).length) loadHookCriteria()
 }
@@ -1612,7 +1696,32 @@ onUnmounted(() => {
 
 /* 爆款拆解 */
 .bd-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* 外部执行器的两种等待态。与 .dt-hint 的区分是有意的：hint 是「知会」，
+   这两条是「当前正在发生什么」——用户在等一个不由平台控制的结果。 */
+.bd-state {
+  margin: 10px 0 0; padding: 10px 14px;
+  border: 1px solid var(--line-soft);
+  background: var(--surface-2);
+  font-size: var(--fs-sm); color: var(--ink-2); line-height: 1.7;
+  max-width: 76ch;
+}
+.bd-state b { font-family: var(--font-mono); font-weight: 700; color: var(--ink); }
+.bd-state a { color: var(--accent); }
+.bd-state-claim {
+  border-color: var(--accent-line);
+  background: var(--accent-soft);
+}
+
 .bd-report { margin-top: 12px; }
+/* 产出方标签：三条路径（平台 / 兜底 / 外部）用颜色区分，扫一眼就能看出
+   这份报告是谁做的，不必去读 model 字符串。 */
+.producer {
+  font-family: var(--font-mono); font-weight: 700;
+  padding: 1px 6px; border: 1px solid var(--line-soft); background: var(--surface-2);
+}
+.producer.ext { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
+.producer.fb { color: var(--ink); border-color: var(--ink); background: var(--surface); }
 .bd-head { display: flex; gap: 16px; align-items: center; }
 .bd-verdict { flex: 1; }
 .bd-verdict-text { font-size: 15px; font-weight: 600; margin: 0 0 6px; }

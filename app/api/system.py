@@ -399,6 +399,10 @@ def update_breakdown_settings_api(body: dict, db: Session = Depends(get_db)):
         "transcript_limit": (1000, 200_000),
         # 推理模型输出 2k 字符 JSON 实测最长 239 秒；低于 120 秒会误判成失败。
         "timeout_sec": (30, 1800),
+        # 租约 1 分钟等于「刚认领就失联」；24 小时等于素材卡一整天没人管。
+        "claim_lease_min": (1, 1440),
+        # 0 次认领等于「永不外放」，那是关掉功能而不是调参。
+        "max_attempts": (1, 20),
     }
     normalized: dict[str, str] = {}
     for short, value in (body or {}).items():
@@ -431,10 +435,15 @@ def update_breakdown_settings_api(body: dict, db: Session = Depends(get_db)):
             if value not in ("any", "all"):
                 raise HTTPException(status_code=422, detail="match_rule 只能是 any 或 all")
             normalized[BREAKDOWN_KEYS["match_rule"]] = str(value)
-        elif short in ("auto_transcribe", "auto_understand", "auto_breakdown"):
+        elif short in ("auto_transcribe", "auto_understand", "auto_breakdown", "internal_fallback"):
             if not isinstance(value, bool):
                 raise HTTPException(status_code=422, detail=f"{short} 必须是布尔")
             normalized[BREAKDOWN_KEYS[short]] = "true" if value else "false"
+        elif short == "executor":
+            # 只认这两个值：写别的值（含拼错）会让平台在「谁做拆解」上处于未定义状态。
+            if value not in ("internal", "external"):
+                raise HTTPException(status_code=422, detail="executor 只能是 internal 或 external")
+            normalized[BREAKDOWN_KEYS["executor"]] = str(value)
         elif short == "hook_criteria":
             from app.core.hook_criteria import valid_criteria
 

@@ -116,6 +116,12 @@ def _step_payload(step: str, asset_id: int, options: dict | None) -> dict:
             payload["use_cover"] = bool(given["use_cover"])
     elif step == "breakdown":
         payload["force"] = bool(given.get("force", False))
+        # 兜底标记必须随步骤落库：它决定 worker 是「跑平台模型」还是「等外部
+        # agent」。丢了它，兜底会静默退化成再登记一次待处理——用户以为平台补
+        # 做了，实际什么都没发生。
+        if given.get("fallback"):
+            payload["fallback"] = True
+            payload["fallback_reason"] = str(given.get("fallback_reason") or "")
     return payload
 
 
@@ -130,8 +136,12 @@ def _merge_step_options(row: PipelineStep, step: str, options: dict | None) -> N
             updates["force_category"] = str(given["force_category"])
         if given.get("use_cover") is not None:
             updates["use_cover"] = bool(given["use_cover"])
-    elif step == "breakdown" and "force" in given:
-        updates["force"] = bool(given.get("force"))
+    elif step == "breakdown":
+        if "force" in given:
+            updates["force"] = bool(given.get("force"))
+        if given.get("fallback"):
+            updates["fallback"] = True
+            updates["fallback_reason"] = str(given.get("fallback_reason") or "")
     if updates:
         row.payload = {**(row.payload or {}), **updates}
 

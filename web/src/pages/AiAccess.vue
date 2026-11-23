@@ -78,6 +78,27 @@
         </div>
       </section>
 
+      <section class="ui-panel executor-strip">
+        <div class="ui-panel-head">
+          <h2>拆解由谁执行</h2>
+          <span class="hint">在「设置 → 爆款拆解」可切换</span>
+        </div>
+        <div class="ui-panel-body">
+          <p class="executor-line">
+            <span class="ui-badge" :class="executorIsExternal ? 'acc' : 'ok'">
+              {{ executorIsExternal ? '外部 Agent' : '平台自己' }}
+            </span>
+            <span v-if="executorIsExternal">
+              素材会排队等 Agent 认领。认领后 <b>{{ manifest.settings.claim_lease_min }} 分钟</b>内没回传就算失联，
+              可被接管；连续 <b>{{ manifest.settings.max_attempts }} 次</b>无人回传
+              <template v-if="manifest.settings.internal_fallback">后由平台兜底补跑一次。</template>
+              <template v-else>后落成一条可见的失败记录（兜底已关闭）。</template>
+            </span>
+            <span v-else>拆解由平台调用自己的模型完成，外部 Agent 仍可读料包，但无法回传报告覆盖结果。</span>
+          </p>
+        </div>
+      </section>
+
       <section class="ui-panel">
         <div class="ui-panel-head">
           <h2>接入向导</h2>
@@ -116,7 +137,7 @@
         <div class="ui-panel-body">
           <pre class="code prompt-code">{{ agentPrompt }}</pre>
           <p class="hint" style="display:block;margin-top:10px">
-            Agent 会完成：安装 MCP → 自检 → 写客户端配置 → 用 list_accounts 验证连通。
+            Agent 会完成：安装 MCP → 自检 → 写客户端配置 → 调一个查询工具验证连通。
             提示词含完整 Key，只在本地 / 私人 Agent 会话里粘贴，不要发到公开群聊或网页。
           </p>
         </div>
@@ -146,12 +167,44 @@
         </div>
       </section>
       <section class="ui-panel">
-        <div class="ui-panel-head"><h2>可用工具（{{ tools.length }}）</h2><span class="hint">工具会按 Key 的权限范围放行</span></div>
-        <div class="ui-panel-body tool-list">
-          <div v-for="t in tools" :key="t.name" class="tool">
-            <code>{{ t.name }}</code>
-            <span>{{ t.desc }}</span>
-            <span class="ui-badge">{{ t.scope }}</span>
+        <div class="ui-panel-head">
+          <h2>可用工具（{{ manifest.tool_count }}）</h2>
+          <span class="hint">清单由后端 <code>/api/agent/manifest</code> 给出，工具按 Key 的权限范围放行</span>
+        </div>
+        <div class="ui-panel-body">
+          <div v-if="manifestTools.length" class="tool-groups">
+            <div v-for="group in toolGroups" :key="group.key" class="tool-group">
+              <h3 class="tool-group-title">
+                {{ group.title }}
+                <span class="tool-group-count">{{ group.tools.length }}</span>
+              </h3>
+              <p class="tool-group-note">{{ group.note }}</p>
+              <div class="tool-list">
+                <div v-for="t in group.tools" :key="t.name" class="tool">
+                  <code>{{ t.name }}</code>
+                  <span>{{ t.summary }}</span>
+                  <span class="ui-badge" :class="{ acc: t.scope === 'breakdown' }">{{ t.scope }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div v-else class="tool-fallback">
+            <p>清单暂时读不到（后端未响应该接口）。工具以 <code>uv run python -m mcp_server.server --self-check</code> 的输出为准。</p>
+          </div>
+
+          <div v-if="manifest.resources.length" class="tool-group">
+            <h3 class="tool-group-title">
+              规则资源
+              <span class="tool-group-count">{{ manifest.resources.length }}</span>
+            </h3>
+            <p class="tool-group-note">规则走 MCP resource 而不是工具：不占每一轮的上下文预算，Agent 需要时才读。</p>
+            <div class="tool-list">
+              <div v-for="r in manifest.resources" :key="r.uri" class="tool">
+                <code>{{ r.uri }}</code>
+                <span>{{ r.summary }}</span>
+                <span class="ui-badge">resource</span>
+              </div>
+            </div>
           </div>
         </div>
       </section>
@@ -249,7 +302,7 @@
 import { ElMessage } from 'element-plus/es/components/message/index.mjs'
 import { computed, onMounted, reactive, ref } from 'vue'
 import { apiCall } from '../api'
-import type { KeyCreate, ApiKeyOut, ApiCallLogOut } from '../api.generated'
+import type { KeyCreate, ApiKeyOut, ApiCallLogOut, AgentManifestOut } from '../api.generated'
 import { formatDateTime } from '../utils/time'
 
 const tab = ref('keys')
@@ -324,12 +377,16 @@ const agentPrompt = computed(() => [
   missingProjectDir.value
     ? '1. 先向我要 platform-api 的部署目录，再执行该目录下的 uv sync --extra mcp。'
     : `1. 进入项目目录并安装 MCP 依赖：cd ${projectDir.value} && uv sync --extra mcp`,
-  `2. 运行自检，确认后端连通、Key 有效、14 个工具可见：PLATFORM_API_BASE=${apiBase.value} PLATFORM_API_KEY=<上面的Key> uv run python -m mcp_server.server --self-check`,
+  `2. 运行自检，确认后端连通、Key 有效、可见工具数 = ${manifest.value.tool_count}：PLATFORM_API_BASE=${apiBase.value} PLATFORM_API_KEY=<上面的Key> uv run python -m mcp_server.server --self-check`,
   '3. 自检通过后，把 MCP 配置写入当前客户端：Codex 写 ~/.codex/config.toml；Claude Code 执行下面这条 claude mcp add 命令。',
   mcpConfig.value,
   claudeCmd.value,
   '4. 重启或刷新 MCP 连接，执行 /mcp，确认出现 xsai-platform。',
-  '5. 用 list_accounts 工具试调一次，并把结果告诉我。',
+  `5. 用 ${smokeTool.value} 工具试调一次，并把结果告诉我。`,
+  '',
+  breakdownFlow.value
+    ? `拆解任务（可选）：这个 Key 若带 breakdown 权限，按 ${breakdownFlow.value} 的顺序认领、取料、回传；报告格式查 breakdown://contract，料包自带规则，不要凭记忆编格式。`
+    : '',
   '',
   '规则：',
   '- 不要修改平台业务代码，只写 MCP 配置。',
@@ -377,23 +434,57 @@ function copyKey() {
 
 const revokeTarget = ref<any>(null)
 
-// MCP 工具清单（与 mcp_server/server.py 注册的 14 个工具一致）
-const tools = [
-  { name: 'list_accounts', desc: '列出所有账号及登录态', scope: 'read' },
-  { name: 'check_account', desc: '立即体检某账号', scope: 'operate' },
-  { name: 'start_qr_login', desc: '发起扫码登录，返回二维码', scope: 'operate' },
-  { name: 'poll_qr_login', desc: '轮询扫码状态，成功后账号入库', scope: 'operate' },
-  { name: 'update_cookie', desc: '手动用 Cookie 录入/更新账号', scope: 'operate' },
-  { name: 'list_followed_creators', desc: '列出关注博主与同步状态', scope: 'read' },
-  { name: 'create_crawl_task', desc: '按关键词建采集任务', scope: 'operate' },
-  { name: 'list_crawl_tasks', desc: '列出采集任务', scope: 'read' },
-  { name: 'trigger_sync', desc: '触发订阅/博主同步', scope: 'operate' },
-  { name: 'search_assets', desc: '搜索素材库', scope: 'read' },
-  { name: 'get_transcript', desc: '取某素材转录文本', scope: 'read' },
-  { name: 'get_analytics', desc: '数据看板摘要', scope: 'read' },
-  { name: 'export_assets', desc: '导出素材转录+分析（md/json）', scope: 'read' },
-  { name: 'import_article', desc: '导入单篇公众号文章', scope: 'operate' },
-]
+// 工具清单不在这里写：它由后端 /api/agent/manifest 给出（目录见 app/core/agent_manifest.py）。
+// 页面自己列工具时，加一个工具就会安静地变成过期文档——用户照着界面接了个不存在的名字，
+// 而报错看起来像他的配置有问题。
+const manifest = ref<AgentManifestOut>({
+  contract_version: '',
+  tool_count: 0,
+  scopes: {},
+  tools: [],
+  groups: {},
+  resources: [],
+  settings: {},
+})
+
+const manifestTools = computed(() => manifest.value.tools)
+
+/** 平台当前把拆解交给谁做。读自 manifest.settings，不在前端自己猜。 */
+const executorIsExternal = computed(() => manifest.value.settings?.executor === 'external')
+
+/** 分组与成员都来自 manifest：前端不按路径前缀猜分类，也不自己写分组文案。 */
+const toolGroups = computed(() =>
+  Object.entries(manifest.value.groups)
+    .map(([key, meta]) => ({
+      key,
+      title: meta.title,
+      note: meta.note,
+      tools: manifestTools.value.filter((t) => t.group === key),
+    }))
+    .filter((g) => g.tools.length),
+)
+
+/** 自检里的冒烟工具：取第一个只读工具，没有就取第一个。 */
+const smokeTool = computed(() => {
+  const first = manifestTools.value.find((t) => t.scope === 'read') || manifestTools.value[0]
+  return first?.name || '任意查询工具'
+})
+
+/** 拆解工序的顺序，从 manifest 的 breakdown 分组里取（清单变了文案跟着变）。 */
+const breakdownFlow = computed(() => {
+  const names = manifestTools.value.filter((t) => t.group === 'breakdown').map((t) => t.name)
+  return names.length ? names.join(' → ') : ''
+})
+
+async function loadManifest() {
+  try {
+    manifest.value = await apiCall('manifest_api_agent_manifest_get')
+  } catch {
+    // 清单读不到不能让整页瘫掉：Key 管理和接入向导仍然可用，
+    // 只是工具区退化成「以 self-check 输出为准」的提示。
+    ElMessage.warning('工具清单读取失败，请刷新重试')
+  }
+}
 
 function switchLogs() {
   tab.value = 'logs'
@@ -442,7 +533,10 @@ async function copyAgentPrompt() {
   }
 }
 
-onMounted(load)
+onMounted(() => {
+  load()
+  loadManifest()
+})
 </script>
 
 <style scoped>
@@ -473,6 +567,17 @@ onMounted(load)
 }
 
 /* 工具清单 */
+.tool-groups { display: flex; flex-direction: column; gap: var(--sp-5); }
+.tool-group + .tool-group { margin-top: var(--sp-5); }
+.tool-group-title {
+  display: flex; align-items: baseline; gap: 8px;
+  margin: 0; font-size: var(--fs-md); font-weight: 800; letter-spacing: 0.01em;
+}
+.tool-group-count {
+  font-family: var(--font-mono); font-size: var(--fs-xs); font-weight: 600;
+  color: var(--muted);
+}
+.tool-group-note { margin: 4px 0 10px; color: var(--muted); font-size: var(--fs-xs); line-height: 1.6; max-width: 72ch; }
 .tool-list { display: flex; flex-direction: column; gap: 8px; }
 .tool {
   display: grid;
@@ -487,6 +592,16 @@ onMounted(load)
 }
 .tool code { font-family: var(--font-mono); color: var(--accent); font-weight: 700; }
 .tool span { color: var(--muted); }
+.tool-fallback {
+  padding: var(--sp-4); border: 1px dashed var(--line-soft); background: var(--surface-2);
+  color: var(--muted); font-size: var(--fs-sm); line-height: 1.7;
+}
+.tool-fallback p { margin: 0; }
+.tool-fallback code { font-family: var(--font-mono); color: var(--ink-2); }
+
+/* 执行器状态：一行说清「谁在做、等多久、没人做会怎样」 */
+.executor-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px; margin: 0; color: var(--ink-2); font-size: var(--fs-sm); line-height: 1.75; max-width: 78ch; }
+.executor-line b { font-family: var(--font-mono); font-weight: 700; }
 
 /* 新手向导：三步概览 + 三项输入 + 可复制提示词 */
 .quick-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-3); }
@@ -513,6 +628,7 @@ onMounted(load)
 .prompt-code { max-height: 360px; border-color: var(--accent); }
 @media (max-width: 820px) {
   .tool { grid-template-columns: 1fr; gap: 4px; }
+  .tool .ui-badge { justify-self: start; }
   .quick-steps, .guide-form { grid-template-columns: 1fr; }
 }
 

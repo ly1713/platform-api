@@ -15,6 +15,7 @@ import math
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.core.breakdown_contract import build_default_prompt
 from app.core.hook_criteria import DEFAULT_HOOK_CRITERIA, valid_criteria
 from app.models import SystemSetting
 
@@ -39,33 +40,25 @@ BREAKDOWN_KEYS: dict[str, str] = {
     "auto_breakdown": "breakdown_auto_breakdown",
     # 爆点判据表（JSON 数组）。拆解提示词据此逐条对照，输出 hook_matches。
     "hook_criteria": "breakdown_hook_criteria",
+    # 执行器：谁来做拆解。``external``（外部 agent 认领）是本次改造的目的，
+    # ``internal``（平台自己跑模型）保留为可回退的一键开关，不是单向切换。
+    "executor": "breakdown_executor",
+    # 外部租约打满仍无人回传时，平台是否自己补跑一次。
+    "internal_fallback": "breakdown_internal_fallback",
+    # 认领租约时长（分钟）：外部 agent 拿料后多久算失联。
+    "claim_lease_min": "breakdown_claim_lease_min",
+    # 一条素材最多被外部认领几次（含接管），超过即落可见 error，不允许静默卡住。
+    "max_attempts": "breakdown_max_attempts",
 }
 
 # 内置默认提示词：定义报告 JSON 结构 + 各分析维度 + 禁编造约束。
 # 结构对齐设计 §2.1；数字（data_context/对标）由后端确定性计算，LLM 只做定性。
-# 注意：模板含 JSON 字面量花括号，仅供人工编辑，不做 str.format（避免误当占位符）。
-DEFAULT_BREAKDOWN_PROMPT = (
-    "你是短视频爆款拆解分析师。根据给定的作品元数据、转录文案、视频理解结果、"
-    "评论区摘要与后端已算好的互动数字，产出一份「为什么火 + 怎么复刻」的结构化拆解报告。\n"
-    "硬性要求：\n"
-    "1. 只依据给定材料分析，**禁止编造**任何看不到的细节；材料缺失的字段一律填 null 或空数组。\n"
-    "2. 数字（播放/点赞/相对中位数倍数/互动率）已由系统算好，你**只引用、不重算**，更不许杜撰新数字。\n"
-    "3. 只输出 JSON，不要解释、不要 Markdown 代码块。\n"
-    "输出 JSON 结构：\n"
-    "{\n"
-    '  "verdict": "一句话结论：这条为什么火",\n'
-    '  "score": 0-100 整数（爆款潜力评分）,\n'
-    '  "hook": {"first_line": "前3秒台词", "first_frame": "首帧画面", "hook_type": "好奇缺口/反常识/清单体/转变叙事/痛点直呼/其他", "why": "为什么抓人"},\n'
-    '  "structure": [{"segment": "0-3s", "role": "钩子/展开/转折/高潮/CTA", "summary": "段落概要"}],\n'
-    '  "pacing": {"pattern_interrupts": ["每3-5秒的变化"], "re_engagement_points": [秒数], "emotion_curve": "情绪曲线描述"},\n'
-    '  "script": {"reusable_phrases": ["可复用句式"], "money_lines": ["金句/记忆点"]},\n'
-    '  "psych_triggers": ["好奇", "认同", "损失厌恶"],\n'
-    '  "cta": {"type": "引导方式", "placement": "位置"},\n'
-    '  "comment_insights": {"top_themes": ["观众最关心"], "controversies": ["争议点"], "questions": ["可回复/可做下一条的问题"]},\n'
-    '  "blueprint": ["复刻步骤 1", "复刻步骤 2"],\n'
-    '  "replication_tips": ["给创作者的落地建议"]\n'
-    "}"
-)
+#
+# **文本由 `core.breakdown_contract` 渲染，不再手写。** 字段表与硬性规则收敛到
+# 那一处后，内部提示词、修复轮 schema、对外契约三份产物才不会各改一半
+# （历史事实：hook_matches 曾经只出现在提示词里，修复轮 schema 缺它）。
+# 上面那条「不做 str.format」的注意事项随之失效：渲染由本模块之外的纯函数完成。
+DEFAULT_BREAKDOWN_PROMPT = build_default_prompt()
 
 _DEFAULT_VIRAL_MULTIPLE = 3.0
 
@@ -87,9 +80,18 @@ _DEFAULTS: dict[str, tuple[object, str]] = {
     "breakdown_auto_breakdown": (False, "bool"),
     # 判据表不走 _coerce：是 JSON 列表，单独解析（见 _parse_criteria）。
     "breakdown_hook_criteria": (None, "str"),
+    # 默认值取 external 符合本次改造目的；兜底默认开，避免外部 agent 不在线时
+    # 平台彻底没有报告。这是「可回退的默认」，不是单向切换。
+    "breakdown_executor": ("external", "str"),
+    "breakdown_internal_fallback": (True, "bool"),
+    # 30 分钟覆盖实测最长拆解（240 秒）+ 人工排查余量；再短会让正常在跑的
+    # agent 被误判失联，再长则素材卡住后用户等太久才知道。
+    "breakdown_claim_lease_min": (30, "int"),
+    "breakdown_max_attempts": (3, "int"),
 }
 
 _MATCH_RULES = ("any", "all")
+_EXECUTORS = ("internal", "external")
 
 
 def _parse_criteria(raw: object) -> list[dict[str, str]]:
@@ -159,6 +161,16 @@ def resolve_breakdown_settings_from_rows(rows: dict[str, str]) -> dict:
             if not isinstance(value, (int, float)) or not math.isfinite(float(value)) or value < 0:
                 value = default
         if key == "breakdown_match_rule" and value not in _MATCH_RULES:
+            value = default
+        if key == "breakdown_executor" and value not in _EXECUTORS:
+            # 手改 KV 写错时回退 internal（而不是 external）：写错的人想要的
+            # 几乎一定不是「平台别再产报告了」，静默停摆比报错更难被发现。
+            value = "internal"
+        # 0 次认领等于「永不外放」，1 分钟租约等于「刚认领就失联」。两者都是
+        # 误配，回退默认而不是照单执行。
+        if key == "breakdown_claim_lease_min" and value < 1:
+            value = default
+        if key == "breakdown_max_attempts" and value < 1:
             value = default
         out[short] = value
     if out["min_engagement_rate"] > 1:

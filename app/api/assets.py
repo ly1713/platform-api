@@ -915,8 +915,8 @@ def get_understanding(asset_id: int, db: Session = Depends(get_db)):
     }
 
 
-def _breakdown_payload(row: ViralBreakdown) -> dict:
-    """把 ViralBreakdown 行序列化为 API 响应（含报告全部字段）。"""
+def _breakdown_payload(db: Session, row: ViralBreakdown) -> dict:
+    """把 ViralBreakdown 行序列化为 API 响应（含报告全部字段与认领状态）。"""
     return {
         "asset_id": row.asset_id,
         "status": row.status,
@@ -931,53 +931,57 @@ def _breakdown_payload(row: ViralBreakdown) -> dict:
         "usage": row.usage or {},
         "error": row.error or "",
         "created_at": row.created_at.isoformat() if row.created_at else None,
+        "produced_by": row.produced_by or "",
+        "contract_version": row.contract_version or "",
+        # 认领信息：让前端能显示「已被谁接管、剩余多久」，而不必另调一个接口。
+        "claim": _claim_view(db, row.asset_id),
     }
 
 
-@router.post("/assets/{asset_id}/breakdown", response_model=schemas.JobRefOut)
+def _claim_view(db: Session, asset_id: int) -> dict | None:
+    """当前认领状态（无人认领返回 None）。
+
+    前端拿到它就能说清「等待外部 Agent 处理」与「已被 X 接管，剩余 N 分钟」的
+    区别——这两个状态对用户意味着完全不同的等待预期。
+    """
+    from app.models import BreakdownClaim
+
+    claim = db.scalar(select(BreakdownClaim).where(BreakdownClaim.asset_id == asset_id))
+    if claim is None or not claim.lease_token:
+        return None
+    from app.services.breakdown_claim import is_live
+
+    if not is_live(claim):
+        return None
+    from datetime import datetime as _dt
+
+    remaining = max(0, int((claim.lease_until - _dt.utcnow()).total_seconds() // 60))
+    return {
+        "agent_name": claim.agent_name,
+        "lease_until": claim.lease_until.isoformat(),
+        "remaining_minutes": remaining,
+        "attempts": claim.attempts,
+    }
+
+
+@router.post("/assets/{asset_id}/breakdown", response_model=schemas.BreakdownDispatchOut)
 def enqueue_breakdown(
     asset_id: int, body: BreakdownRequest | None = None, db: Session = Depends(get_db)
 ):
-    """入队爆款拆解（worker 消费）；素材不存在 404，force 非布尔 422。
+    """入队爆款拆解；素材不存在 404，force 非布尔 422。
 
-    - 无报告：建 pending 行并入队。
-    - 已 done 且 force=False：worker 会短路返回既有结果（不重复花 token），状态保持 done。
-    - force=True：置 pending 重跑。
+    按设置里的执行器分流（``services.breakdown_dispatch``，唯一判定点）：
+
+    - ``internal``：建 job 跑平台自己的模型（改造前的行为）；
+    - ``external``：登记待处理记录，**不建 job**，等外部 agent 认领。
+      响应里 ``job_id`` 为 ``null`` 是正确结果，``executor`` 如实告知走了哪条路。
     """
-    asset = _live_asset_or_404(db, asset_id)
+    _live_asset_or_404(db, asset_id)
     force = bool(body.force) if body else False
-    row = db.scalar(select(ViralBreakdown).where(ViralBreakdown.asset_id == asset_id))
-    if row is None:
-        row = ViralBreakdown(asset_id=asset_id, status="pending")
-        db.add(row)
-    elif not (row.status == "done" and not force):
-        # 非「已完成且无需重跑」的既有行 → 立即置 pending，让 GET 立刻可读。
-        row.status = "pending"
-        row.error = ""
-    from app.services.workflow_engine import register_workflow
+    from app.services.breakdown_dispatch import dispatch
 
-    result = register_workflow(
-        db,
-        asset_id,
-        ["breakdown"],
-        options={"force": force},
-        force=["breakdown"] if force else (),
-        commit=True,
-    )
-    from app.models import PipelineStep
-
-    step = db.scalar(
-        select(PipelineStep).where(
-            PipelineStep.run_id == result.run.id,
-            PipelineStep.step == "breakdown",
-        )
-    )
-    return {
-        "job_id": step.job_id if step is not None else None,
-        "run_id": result.run.id,
-        "status": step.status if step is not None else "waiting_prerequisite",
-        **_ai_schedule_hold(db),
-    }
+    result = dispatch(db, asset_id, force=force)
+    return {**result, **_ai_schedule_hold(db)}
 
 
 @router.get(
@@ -987,19 +991,23 @@ def enqueue_breakdown(
 def get_breakdown(asset_id: int, db: Session = Depends(get_db)):
     """读取爆款拆解报告；素材不存在 404，尚未生成返回 ``{"status":"pending"}``。"""
     _live_asset_or_404(db, asset_id)
+    from app.services import breakdown_dispatch as dispatch_mod
     from app.services.workflow_engine import public_status
 
     pipeline = public_status(db, asset_id)
     row = db.scalar(select(ViralBreakdown).where(ViralBreakdown.asset_id == asset_id))
     if row is None or row.status != "done":
-        # 未生成 / 进行中 / 失败：给轻量状态（失败附 error），不返回半成品报告。
+        # 未生成 / 进行中 / 失败：给轻量状态（失败附 error 与认领信息），
+        # 不返回半成品报告。
         return {
+            "claim": _claim_view(db, asset_id),
             "asset_id": asset_id,
             "status": row.status if row is not None else "pending",
             "error": (row.error or "") if row is not None else "",
             "pipeline": pipeline,
+            "executor": dispatch_mod.current_executor(db),
         }
-    payload = _breakdown_payload(row)
+    payload = _breakdown_payload(db, row)
     payload["pipeline"] = pipeline
     return payload
 

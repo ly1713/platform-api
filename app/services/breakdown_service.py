@@ -19,6 +19,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core import events
+from app.core.breakdown_contract import (
+    BREAKDOWN_CONTRACT_VERSION,
+    normalize_hook_matches,
+    normalize_score,
+    normalize_sections,
+)
 from app.core.breakdown_settings import get_breakdown_settings
 from app.models import (
     Comment,
@@ -346,59 +352,29 @@ def _assemble_payload(
 
 
 def _clamp_score(value: object) -> float:
-    """把模型评分收敛到 0-100；非法 / NaN 记 0。"""
-    if isinstance(value, bool):
-        return 0.0
-    try:
-        num = float(value)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return 0.0
-    if num != num:
-        return 0.0
-    return max(0.0, min(100.0, num))
+    """把模型评分收敛到 0-100；非法 / NaN 记 0。
+
+    实现已下沉到 ``core.breakdown_contract.normalize_score``：外部回传的报告
+    走同一套归一化，两个入口不能各有一套「评分怎么算」。
+    """
+    return normalize_score(value)
 
 
 def _sections(parsed: dict) -> dict:
-    """模型定性产出中除 verdict/score/comment_insights 外的各板块。"""
-    return {
-        "hook": parsed.get("hook"),
-        "structure": parsed.get("structure"),
-        "pacing": parsed.get("pacing"),
-        "script": parsed.get("script"),
-        "psych_triggers": parsed.get("psych_triggers"),
-        "cta": parsed.get("cta"),
-        "blueprint": parsed.get("blueprint"),
-        "replication_tips": parsed.get("replication_tips"),
-    }
+    """模型定性产出中除 verdict/score/comment_insights 外的各板块。
+
+    实现已下沉到 ``core.breakdown_contract.normalize_sections``（同上）。
+    """
+    return normalize_sections(parsed)
 
 
-def _hook_matches(parsed: dict) -> list[dict]:
+def _hook_matches(parsed: dict, criteria: list[dict] | None = None) -> list[dict]:
     """规整判据命中列表：只保留可核对的三元组，过滤模型自由发挥的字段。
 
-    每条至少要有 ``criterion`` 和 ``evidence``——只有 id 没有依据的命中
-    等于「模型说它命中了」，无法核对，不写进报告。
+    实现已下沉到 ``core.breakdown_contract.normalize_hook_matches``。传 ``criteria``
+    时额外要求判据 id 真实存在——内部链路现在也传，理由见该函数文档。
     """
-    raw = parsed.get("hook_matches")
-    if not isinstance(raw, list):
-        return []
-    out: list[dict] = []
-    for item in raw:
-        if not isinstance(item, dict):
-            continue
-        criterion = item.get("criterion")
-        evidence = item.get("evidence")
-        if not isinstance(criterion, str) or not criterion.strip():
-            continue
-        if not isinstance(evidence, str) or not evidence.strip():
-            continue
-        entry = {"criterion": criterion.strip(), "evidence": evidence.strip()[:300]}
-        segment = item.get("segment")
-        if isinstance(segment, str) and segment.strip():
-            entry["segment"] = segment.strip()[:40]
-        out.append(entry)
-        if len(out) >= 12:
-            break
-    return out
+    return normalize_hook_matches(parsed, criteria)
 
 
 def _str_or_empty(value: object) -> str:
@@ -413,7 +389,13 @@ def _dict_or_empty(value: object) -> dict:
 
 
 async def run_breakdown(
-    db: Session, asset_id: int, *, force: bool = False, job_id: int | None = None
+    db: Session,
+    asset_id: int,
+    *,
+    force: bool = False,
+    job_id: int | None = None,
+    fallback: bool = False,
+    fallback_reason: str = "",
 ) -> ViralBreakdown:
     """跑完整爆款拆解链路，返回并落库 `ViralBreakdown`。
 
@@ -421,6 +403,9 @@ async def run_breakdown(
     - `force=True`：即使已 `done` 也重跑（upsert，按 asset_id 唯一，不产生重复行）。
     - 依赖约束：调用方应先通过 ``workflow_engine`` 放行；这里再做一次硬校验，
       没有已完成转录与视频理解时拒绝调用模型（不产出降级空报告）。
+    - ``fallback=True``：本次是「外部无人回传、平台补跑」。报告上必须留痕，
+      否则用户看到一份 done 的报告，会以为外部 agent 干了活（或反过来以为
+      平台从不外移），两种误解都会导致下次做出错误判断。
 
     Raises:
         BreakdownInputError: 素材不存在 / 无关联内容（数据问题，不可重试）。
@@ -528,7 +513,9 @@ async def run_breakdown(
         row.sections = _sections(parsed)
         row.comment_insights = _dict_or_empty(parsed.get("comment_insights"))
         # 判据命中是结构化结果：它回答「这条凭什么算爆点」，比自由文本的 verdict 更可核对。
-        row.sections["hook_matches"] = _hook_matches(parsed)
+        # 传入本次实际下发的判据表：模型编一个不存在的判据 id 时会被丢弃，而不是
+        # 让报告里出现一条谁也核对不了的「命中」。
+        row.sections["hook_matches"] = _hook_matches(parsed, s.get("hook_criteria"))
         row.data_context = payload["data_context"]
         row.understanding_available = payload["understanding"] is not None
         row.model = result.get("model") or ""
@@ -545,6 +532,15 @@ async def run_breakdown(
             # 漏斗是「送了多少给大模型」的证据：不解开它就说不清为什么报告
             # 只覆盖了部分内容，也无法判断它到底省了多少。
             row.routing = {**(row.routing or {}), "prefilter": funnel}
+        # 产出方与契约版本：同一条素材可能先后经内部/外部两条路径，不记下来
+        # 就无法解释「这次的结论为什么和上次不一样」。
+        row.produced_by = "internal:fallback" if fallback else "internal"
+        row.contract_version = BREAKDOWN_CONTRACT_VERSION
+        if fallback:
+            row.routing = {
+                **(row.routing or {}),
+                "external": {"fallback": True, "reason": fallback_reason[:200]},
+            }
         row.status = "done"
         row.error = ""
         events.publish("breakdown_status", {"asset_id": asset_id, "status": "done"}, db=db)

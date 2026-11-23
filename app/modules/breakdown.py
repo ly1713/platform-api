@@ -21,6 +21,7 @@ import logging
 import re
 from typing import Callable
 
+from app.core.breakdown_contract import render_repair_schema, truncate_transcript
 from app.core.breakdown_settings import DEFAULT_BREAKDOWN_PROMPT
 from app.core.evidence_class import evidence_guidance
 from app.core.hook_criteria import (
@@ -119,12 +120,10 @@ def build_breakdown_prompt(payload: dict) -> tuple[str, str]:
 
     limit = payload.get("transcript_limit")
     limit = int(limit) if isinstance(limit, int) and limit > 0 else _TRANSCRIPT_LIMIT
-    raw_transcript = (payload.get("transcript") or "").strip()
-    transcript = raw_transcript[:limit]
-    if len(raw_transcript) > limit:
-        # 显式告诉模型「被截断了」，否则它会把结尾的缺失当成「视频就此结束」，
-        # 仍然自信地给出 structure / cta。诚实的残缺好过编造的完整。
-        transcript += f"\n\n（转录在此处被截断：原文 {len(raw_transcript)} 字符，仅提供前 {limit} 字符）"
+    raw_transcript = payload.get("transcript")
+    # 截断与「已截断」提示由契约层统一渲染：外部料包用同一个函数，
+    # 两条路径看到的材料才逐字节相同。
+    transcript, _truncation = truncate_transcript(raw_transcript, limit)
     comment_lines = [str(c) for c in (payload.get("comments") or []) if str(c).strip()][:_COMMENT_LIMIT]
 
     understanding = payload.get("understanding")
@@ -337,32 +336,7 @@ def _summarize_raw(text: str, limit: int = 120) -> str:
     return flat[:limit] + ("…" if len(flat) > limit else "")
 
 
-_REPAIR_SCHEMA = json.dumps(
-    {
-        "verdict": "一句话结论：这条为什么火",
-        "score": 85,
-        "hook": {
-            "first_line": "前3秒台词",
-            "first_frame": "首帧画面",
-            "hook_type": "好奇缺口/反常识/清单体/转变叙事/痛点直呼/其他",
-            "why": "为什么抓人",
-        },
-        "structure": [{"segment": "0-3s", "role": "钩子", "summary": "段落概要"}],
-        "pacing": {
-            "pattern_interrupts": ["每3-5秒的变化"],
-            "re_engagement_points": [0],
-            "emotion_curve": "情绪曲线描述",
-        },
-        "script": {"reusable_phrases": ["可复用句式"], "money_lines": ["金句"]},
-        "psych_triggers": ["好奇"],
-        "cta": {"type": "引导方式", "placement": "位置"},
-        "comment_insights": {"top_themes": ["观众最关心"], "controversies": ["争议点"], "questions": ["可回复的问题"]},
-        "blueprint": ["复刻步骤"],
-        "replication_tips": ["给创作者的落地建议"],
-    },
-    ensure_ascii=False,
-    indent=1,
-)
+_REPAIR_SCHEMA = render_repair_schema()
 
 _REPAIR_INSTRUCTION = (
     "你上一条回复不是合法 JSON，系统无法解析。\n"

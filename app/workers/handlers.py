@@ -659,7 +659,15 @@ async def handle_understand_video(db: Session, payload: dict, job=None) -> None:
 
 
 async def handle_breakdown(db: Session, payload: dict, job=None) -> None:
-    """爆款拆解：拼装转录/L3/评论/确定性数字 → 调 LLM → 写 ViralBreakdown。"""
+    """爆款拆解：拼装转录/L3/评论/确定性数字 → 调 LLM → 写 ViralBreakdown。
+
+    外部执行器下这个 job 不该存在（``breakdown_dispatch`` 不入队），但手动
+    ``force`` 重跑、兜底路径或历史遗留 job 仍可能落到这里。因此这里按开关分流：
+    - ``external`` 且**不是兜底**：不跑模型，只把记录保持为待外部处理，
+      避免「用户以为交给了外部，平台却偷偷花了一次大模型钱」；
+    - ``internal`` 或兜底：照旧跑内部链路。
+    """
+    from app.services.breakdown_dispatch import is_external
     from app.services.breakdown_service import BreakdownInputError, run_breakdown
     from app.services.model_access_service import ModelConfigError
 
@@ -667,10 +675,19 @@ async def handle_breakdown(db: Session, payload: dict, job=None) -> None:
     asset = db.get(MediaAsset, asset_id)
     if asset is None or asset.deleted_at is not None:
         return
+    fallback = bool(payload.get("fallback"))
+    if is_external(db) and not fallback:
+        from app.services.breakdown_dispatch import prepare_external
+
+        prepare_external(db, asset_id, force=bool(payload.get("force", False)))
+        db.commit()
+        return
     try:
         kwargs = {"force": bool(payload.get("force", False))}
         if job is not None:
             kwargs["job_id"] = job.id
+        kwargs["fallback"] = fallback
+        kwargs["fallback_reason"] = str(payload.get("fallback_reason") or "")
         await run_breakdown(db, asset_id, **kwargs)
     except BreakdownInputError as exc:
         # 数据问题（素材/内容缺失）不可重试，直接置 error，避免无谓重试。

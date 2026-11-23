@@ -46,6 +46,39 @@ export interface AccountSyncToggle {
   "enabled": boolean
 }
 
+/** AgentGroupOut */
+export interface AgentGroupOut {
+  "title": string
+  "note": string
+}
+
+/** AgentManifestOut */
+export interface AgentManifestOut {
+  "contract_version": string
+  "tool_count": number
+  "scopes": Record<string, string>
+  "tools": AgentToolOut[]
+  "groups": Record<string, AgentGroupOut>
+  "resources": AgentResourceOut[]
+  "settings": Record<string, unknown>
+}
+
+/** AgentResourceOut */
+export interface AgentResourceOut {
+  "uri": string
+  "summary": string
+}
+
+/** AgentToolOut */
+export interface AgentToolOut {
+  "name": string
+  "method": string
+  "path": string
+  "scope": string
+  "summary": string
+  "group": string
+}
+
 /** AiScheduleControlledJobOut */
 export interface AiScheduleControlledJobOut {
   "job_type": string
@@ -353,12 +386,34 @@ export interface AuthStatus {
   "initialized": boolean
 }
 
+/** BreakdownClaimView */
+export interface BreakdownClaimView {
+  "agent_name"?: string
+  "lease_until"?: string | null
+  "remaining_minutes"?: number
+  "attempts"?: number
+}
+
+/** BreakdownDispatchOut */
+export interface BreakdownDispatchOut {
+  "job_id"?: number | null
+  "status"?: string | null
+  "run_id"?: number | null
+  "tier"?: string | null
+  "ai_schedule_held"?: boolean | null
+  "ai_next_open_at"?: string | null
+  "executor"?: "internal" | "external"
+  "prerequisites"?: string | null
+}
+
 /** BreakdownPending */
 export interface BreakdownPending {
   "asset_id": number
   "status": "pending" | "doing" | "error"
   "error"?: string
   "pipeline"?: AssetWorkflow | null
+  "claim"?: BreakdownClaimView | null
+  "executor"?: string
 }
 
 /** BreakdownReport */
@@ -375,6 +430,8 @@ export interface BreakdownReport {
   "prompt_version"?: string
   "usage"?: Record<string, unknown>
   "created_at"?: string | null
+  "produced_by"?: string
+  "contract_version"?: string
   "pipeline"?: AssetWorkflow | null
 }
 
@@ -397,6 +454,10 @@ export interface BreakdownSettingsOut {
   "auto_transcribe": boolean
   "auto_understand": boolean
   "auto_breakdown": boolean
+  "executor"?: string
+  "internal_fallback"?: boolean
+  "claim_lease_min"?: number
+  "max_attempts"?: number
   "hook_criteria"?: Record<string, unknown>[]
 }
 
@@ -1184,6 +1245,12 @@ export interface RefreshIn {
   "force"?: boolean
 }
 
+/** ReleaseIn */
+export interface ReleaseIn {
+  "lease_token": string
+  "reason"?: string
+}
+
 /** RemoteSourceOut */
 export interface RemoteSourceOut {
   "remote_id": string
@@ -1212,6 +1279,14 @@ export interface ReportGapOut {
   "category": string
   "platform_median_play": number
   "author_done"?: boolean
+}
+
+/** ReportIn */
+export interface ReportIn {
+  "lease_token": string
+  "report": unknown
+  "model"?: string
+  "usage"?: Record<string, unknown>
 }
 
 /** ReportItemOut */
@@ -1621,6 +1696,30 @@ export interface ApiPaths {
   "/api/accounts/{account_id}/sync-switches/{key}": {
     "PUT": "update_switch_api_accounts__account_id__sync_switches__key__put"
   }
+  "/api/agent/breakdown/pending": {
+    "GET": "list_pending_api_agent_breakdown_pending_get"
+  }
+  "/api/agent/breakdown/{asset_id}/claim": {
+    "POST": "claim_api_agent_breakdown__asset_id__claim_post"
+  }
+  "/api/agent/breakdown/{asset_id}/packet": {
+    "GET": "get_packet_api_agent_breakdown__asset_id__packet_get"
+  }
+  "/api/agent/breakdown/{asset_id}/release": {
+    "POST": "release_api_agent_breakdown__asset_id__release_post"
+  }
+  "/api/agent/breakdown/{asset_id}/report": {
+    "POST": "submit_report_api_agent_breakdown__asset_id__report_post"
+  }
+  "/api/agent/contract": {
+    "GET": "get_contract_api_agent_contract_get"
+  }
+  "/api/agent/hook-criteria": {
+    "GET": "get_hook_criteria_api_agent_hook_criteria_get"
+  }
+  "/api/agent/manifest": {
+    "GET": "manifest_api_agent_manifest_get"
+  }
   "/api/ai/call-logs": {
     "GET": "call_logs_api_ai_call_logs_get"
   }
@@ -1990,6 +2089,7 @@ export type update_account_storage_api_accounts_account_id_storage_putResponse =
 export type update_account_sync_enabled_api_accounts_account_id_sync_enabled_putResponse = AccountOut
 export type list_switches_api_accounts_account_id_sync_switches_getResponse = SwitchListOut
 export type update_switch_api_accounts_account_id_sync_switches_key_putResponse = SwitchUpdateOut
+export type manifest_api_agent_manifest_getResponse = AgentManifestOut
 export type call_logs_api_ai_call_logs_getResponse = ApiCallLogOut[]
 export type list_keys_api_ai_keys_getResponse = ApiKeyOut[]
 export type create_key_api_ai_keys_postResponse = ApiKeyCreatedOut
@@ -2005,7 +2105,7 @@ export type get_asset_api_assets_asset_id_getResponse = AssetDetail
 export type delete_asset_api_assets_asset_id_deleteResponse = AssetDeleteOut
 export type enqueue_analyze_api_assets_asset_id_analyze_postResponse = JobRefOut
 export type get_article_api_assets_asset_id_article_getResponse = AssetArticle
-export type enqueue_breakdown_api_assets_asset_id_breakdown_postResponse = JobRefOut
+export type enqueue_breakdown_api_assets_asset_id_breakdown_postResponse = BreakdownDispatchOut
 export type get_breakdown_api_assets_asset_id_breakdown_getResponse = BreakdownPending | BreakdownReport
 export type list_comments_api_assets_asset_id_comments_getResponse = AssetCommentPage
 export type enqueue_download_api_assets_asset_id_download_postResponse = JobRefOut
@@ -2115,6 +2215,7 @@ export interface ApiResponses {
   "update_account_sync_enabled_api_accounts__account_id__sync_enabled_put": update_account_sync_enabled_api_accounts_account_id_sync_enabled_putResponse
   "list_switches_api_accounts__account_id__sync_switches_get": list_switches_api_accounts_account_id_sync_switches_getResponse
   "update_switch_api_accounts__account_id__sync_switches__key__put": update_switch_api_accounts_account_id_sync_switches_key_putResponse
+  "manifest_api_agent_manifest_get": manifest_api_agent_manifest_getResponse
   "call_logs_api_ai_call_logs_get": call_logs_api_ai_call_logs_getResponse
   "list_keys_api_ai_keys_get": list_keys_api_ai_keys_getResponse
   "create_key_api_ai_keys_post": create_key_api_ai_keys_postResponse
@@ -2234,6 +2335,8 @@ export type update_credential_api_accounts_account_id_credential_putBody = Crede
 export type update_account_storage_api_accounts_account_id_storage_putBody = AccountStorageUpdate
 export type update_account_sync_enabled_api_accounts_account_id_sync_enabled_putBody = AccountSyncToggle
 export type update_switch_api_accounts_account_id_sync_switches_key_putBody = SwitchIn
+export type release_api_agent_breakdown_asset_id_release_postBody = ReleaseIn
+export type submit_report_api_agent_breakdown_asset_id_report_postBody = ReportIn
 export type create_key_api_ai_keys_postBody = KeyCreate
 export type export_assets_api_assets_export_postBody = ExportRequest
 export type enqueue_bulk_refresh_metrics_api_assets_refresh_metrics_bulk_postBody = BulkRefreshMetricsRequest
@@ -2283,6 +2386,8 @@ export interface ApiRequestBodies {
   "update_account_storage_api_accounts__account_id__storage_put": update_account_storage_api_accounts_account_id_storage_putBody
   "update_account_sync_enabled_api_accounts__account_id__sync_enabled_put": update_account_sync_enabled_api_accounts_account_id_sync_enabled_putBody
   "update_switch_api_accounts__account_id__sync_switches__key__put": update_switch_api_accounts_account_id_sync_switches_key_putBody
+  "release_api_agent_breakdown__asset_id__release_post": release_api_agent_breakdown_asset_id_release_postBody
+  "submit_report_api_agent_breakdown__asset_id__report_post": submit_report_api_agent_breakdown_asset_id_report_postBody
   "create_key_api_ai_keys_post": create_key_api_ai_keys_postBody
   "export_assets_api_assets_export_post": export_assets_api_assets_export_postBody
   "enqueue_bulk_refresh_metrics_api_assets_refresh_metrics_bulk_post": enqueue_bulk_refresh_metrics_api_assets_refresh_metrics_bulk_postBody
@@ -2333,6 +2438,8 @@ export interface ApiRequiredBodyOperations {
   "update_account_storage_api_accounts__account_id__storage_put": true
   "update_account_sync_enabled_api_accounts__account_id__sync_enabled_put": true
   "update_switch_api_accounts__account_id__sync_switches__key__put": true
+  "release_api_agent_breakdown__asset_id__release_post": true
+  "submit_report_api_agent_breakdown__asset_id__report_post": true
   "create_key_api_ai_keys_post": true
   "export_assets_api_assets_export_post": true
   "enqueue_bulk_refresh_metrics_api_assets_refresh_metrics_bulk_post": true
@@ -2402,6 +2509,18 @@ export interface ApiPathParams {
   "update_switch_api_accounts__account_id__sync_switches__key__put": {
   "account_id": number
   "key": string
+}
+  "claim_api_agent_breakdown__asset_id__claim_post": {
+  "asset_id": number
+}
+  "get_packet_api_agent_breakdown__asset_id__packet_get": {
+  "asset_id": number
+}
+  "release_api_agent_breakdown__asset_id__release_post": {
+  "asset_id": number
+}
+  "submit_report_api_agent_breakdown__asset_id__report_post": {
+  "asset_id": number
 }
   "revoke_key_api_ai_keys__key_id__delete": {
   "key_id": number
@@ -2588,6 +2707,17 @@ export interface ApiQueryParams {
   "remote_sources_api_accounts__account_id__remote_sources_get": {
   "source_type"?: string
 }
+  "list_pending_api_agent_breakdown_pending_get": {
+  "limit"?: number
+}
+  "claim_api_agent_breakdown__asset_id__claim_post": {
+  "agent_name"?: string
+  "max_chars"?: number | null
+}
+  "get_packet_api_agent_breakdown__asset_id__packet_get": {
+  "max_chars"?: number | null
+  "comment_limit"?: number
+}
   "call_logs_api_ai_call_logs_get": {
   "limit"?: number
   "offset"?: number
@@ -2705,6 +2835,14 @@ export const apiRoutes = {
   "update_account_sync_enabled_api_accounts__account_id__sync_enabled_put": { method: "PUT", path: "/api/accounts/{account_id}/sync-enabled" },
   "list_switches_api_accounts__account_id__sync_switches_get": { method: "GET", path: "/api/accounts/{account_id}/sync-switches" },
   "update_switch_api_accounts__account_id__sync_switches__key__put": { method: "PUT", path: "/api/accounts/{account_id}/sync-switches/{key}" },
+  "list_pending_api_agent_breakdown_pending_get": { method: "GET", path: "/api/agent/breakdown/pending" },
+  "claim_api_agent_breakdown__asset_id__claim_post": { method: "POST", path: "/api/agent/breakdown/{asset_id}/claim" },
+  "get_packet_api_agent_breakdown__asset_id__packet_get": { method: "GET", path: "/api/agent/breakdown/{asset_id}/packet" },
+  "release_api_agent_breakdown__asset_id__release_post": { method: "POST", path: "/api/agent/breakdown/{asset_id}/release" },
+  "submit_report_api_agent_breakdown__asset_id__report_post": { method: "POST", path: "/api/agent/breakdown/{asset_id}/report" },
+  "get_contract_api_agent_contract_get": { method: "GET", path: "/api/agent/contract" },
+  "get_hook_criteria_api_agent_hook_criteria_get": { method: "GET", path: "/api/agent/hook-criteria" },
+  "manifest_api_agent_manifest_get": { method: "GET", path: "/api/agent/manifest" },
   "call_logs_api_ai_call_logs_get": { method: "GET", path: "/api/ai/call-logs" },
   "list_keys_api_ai_keys_get": { method: "GET", path: "/api/ai/keys" },
   "create_key_api_ai_keys_post": { method: "POST", path: "/api/ai/keys" },

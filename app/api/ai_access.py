@@ -17,7 +17,9 @@ from app.models import ApiCallLog, ApiKey
 
 router = APIRouter(prefix="/api/ai", tags=["ai-access"], dependencies=[Depends(security.require_admin)])
 
-_VALID_SCOPES = {"read", "operate", "admin"}
+# ``breakdown`` 是拆解外移后新增的 scope：只读 Key 能取料，认领/回传需要它。
+# 这样「让 agent 看看料」与「让 agent 交作业」可以分别授权。
+_VALID_SCOPES = {"read", "operate", "admin", "breakdown"}
 
 
 class KeyCreate(BaseModel):

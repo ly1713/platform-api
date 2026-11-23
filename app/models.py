@@ -688,6 +688,41 @@ class ViralBreakdown(Base):
     routing: Mapped[dict] = mapped_column(JSON, default=dict)
     status: Mapped[str] = mapped_column(String(16), default="pending")  # pending/doing/done/error
     error: Mapped[str] = mapped_column(String(512), default="")
+    # 谁产出了这份报告：``internal``（平台自己跑模型）/ ``external:<agent>``（外部
+    # agent 回传）/ ``internal:fallback``（外部无人回传后平台兜底）。同一条素材
+    # 可能先后经过两条路径，不记下来就无法解释「这次的结论为什么和上次不一样」。
+    produced_by: Mapped[str] = mapped_column(String(64), default="")
+    # 产出时使用的契约版本。外部执行方换版后，历史报告的可比性靠这个判断。
+    contract_version: Mapped[str] = mapped_column(String(32), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class BreakdownClaim(Base):
+    """拆解认领租约：一素材一行（asset_id 唯一）。
+
+    为什么独立成表而不是给 ``viral_breakdown.status`` 加状态：认领是**外部执行方**
+    的租约（谁在做、做到什么时候），报告状态是**产物**的状态机。混在一起会让
+    ``workflow_engine._result_exists`` / ``run_reconciler`` / 前端状态全部要认识
+    一组外部概念，任一处漏改就会把「被认领」误判成「已完成」或「卡住」。
+
+    ``lease_token`` 而不是只凭 ``asset_id``：A 的租约过期后 B 接手，A 迟到的回传
+    不能覆盖 B 的结果。回传时 token 不匹配即 409。
+    """
+
+    __tablename__ = "breakdown_claim"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    asset_id: Mapped[int] = mapped_column(
+        ForeignKey("media_asset.id", ondelete="CASCADE"), unique=True, index=True
+    )
+    agent_name: Mapped[str] = mapped_column(String(120), default="")
+    # 认领凭据（随机 token），回传/释放时必须匹配。不存明文之外的任何凭证。
+    lease_token: Mapped[str] = mapped_column(String(64), default="")
+    claimed_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    lease_until: Mapped[datetime] = mapped_column(DateTime, default=utcnow, index=True)
+    # 已被认领过几次（含接管）。超过 breakdown_max_attempts 后不再放给外部，
+    # 由回收流程落成一个**可见**的 error，不允许静默卡在 pending。
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
 

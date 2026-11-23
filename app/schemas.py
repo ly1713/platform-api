@@ -557,6 +557,15 @@ class BreakdownSettingsOut(BaseModel):
     auto_transcribe: bool
     auto_understand: bool
     auto_breakdown: bool
+    # 执行器：``external``（外部 agent 认领，平台发料）/ ``internal``（平台自己跑模型）。
+    # 这是可回退的开关，不是单向切换——设回 internal 就恢复改造前的行为。
+    executor: str = "external"
+    # 外部认领次数用尽仍无人回传时，平台是否自己补跑一次。
+    internal_fallback: bool = True
+    # 认领租约时长（分钟）：agent 拿料后多久算失联、可被接管。
+    claim_lease_min: int = 30
+    # 一条素材最多被外部认领几次（含接管），超过即落可见 error 或兜底。
+    max_attempts: int = 3
     # 爆点判据表（按影响力排序）。拆解提示词据此逐条对照并输出 hook_matches。
     hook_criteria: list[dict] = []
 
@@ -849,11 +858,25 @@ class CrawlRunOut(BaseModel):
     finished_at: str | None = None
 
 
+class BreakdownClaimView(BaseModel):
+    """当前外部认领状态：谁在做、还剩多久。"""
+
+    agent_name: str = ""
+    lease_until: str | None = None
+    remaining_minutes: int = 0
+    attempts: int = 0
+
+
 class BreakdownPending(BaseModel):
     asset_id: int
     status: Literal["pending", "doing", "error"]
     error: str = ""
     pipeline: AssetWorkflow | None = None
+    # 有人在外部做时非空：前端据此显示「已被 X 接管，剩余 N 分钟」而不是「等待中」。
+    claim: BreakdownClaimView | None = None
+    # 当前执行器。前端不另调设置接口：这条响应就是它渲染的那个状态，多一次调用
+    # 只会制造「状态与开关说法不一致」的时间窗口。
+    executor: str = "external"
 
 
 class BreakdownReport(BaseModel):
@@ -869,6 +892,10 @@ class BreakdownReport(BaseModel):
     prompt_version: str = ""
     usage: dict = {}
     created_at: str | None = None
+    # 谁产出了这份报告：``internal`` / ``internal:fallback`` / ``external:<agent>``。
+    # 改造后同一条素材可能先后经两条路径，报告页必须能说清「这份是谁做的」。
+    produced_by: str = ""
+    contract_version: str = ""
     pipeline: AssetWorkflow | None = None
 
 
@@ -1141,6 +1168,18 @@ class JobRefOut(BaseModel):
     tier: str | None = None
     ai_schedule_held: bool | None = None
     ai_next_open_at: str | None = None
+
+
+class BreakdownDispatchOut(JobRefOut):
+    """拆解入队结果：如实告知走了哪条执行路径。
+
+    外部模式下 ``job_id`` 为 ``None``——那不是失败，而是「已排入外部队列」。
+    没有这个字段，前端只能靠 ``job_id is None`` 猜，猜错就会把正常排队
+    显示成「任务创建失败」。
+    """
+
+    executor: Literal["internal", "external"] = "internal"
+    prerequisites: str | None = None
 
 
 class BulkRefreshOut(BaseModel):

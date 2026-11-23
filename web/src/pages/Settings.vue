@@ -348,6 +348,41 @@
       <el-tab-pane label="爆款拆解" name="breakdown">
         <p class="tip">自动爆款判定「阀门」+ 命中后的自动加工链。视频下载完成后，命中任一/全部阀门的才会被自动拆解。</p>
         <el-form label-width="200px" style="max-width: 720px">
+          <el-divider content-position="left">谁来做拆解</el-divider>
+          <el-form-item label="执行器 executor">
+            <el-radio-group v-model="bd.executor">
+              <el-radio-button value="external">外部 Agent</el-radio-button>
+              <el-radio-button value="internal">平台自己跑</el-radio-button>
+            </el-radio-group>
+            <span class="detail" style="display:block;margin-top:6px">
+              {{ bd.executor === 'external'
+                ? '素材会排进外部队列等 Agent 认领，平台只负责转录、视频理解与发料。'
+                : '平台调用自己的模型产出报告，不排队等外部。' }}
+            </span>
+          </el-form-item>
+          <p v-if="bd.executor === 'external'" class="tip executor-warn">
+            改为外部后，平台不再自动产出拆解报告。没有 Agent 在线认领时，素材会一直排队；
+            想恢复自动出报告，把执行器切回「平台自己跑」。
+          </p>
+          <template v-if="bd.executor === 'external'">
+            <el-form-item label="认领租约（分钟）">
+              <el-input-number v-model="bd.claim_lease_min" :min="1" :max="1440" :precision="0" />
+              <span class="detail">Agent 认领后多久没回传算失联，可被其他 Agent 接管（默认 30）</span>
+            </el-form-item>
+            <el-form-item label="最多认领次数">
+              <el-input-number v-model="bd.max_attempts" :min="1" :max="20" :precision="0" />
+              <span class="detail">含接管。用尽后见下面的兜底开关，不允许一直静默排队</span>
+            </el-form-item>
+            <el-form-item label="无人回传时平台兜底">
+              <el-switch v-model="bd.internal_fallback" />
+              <span class="detail">
+                {{ bd.internal_fallback
+                  ? '打开：次数用尽后平台自己补跑一次，报告里会注明是兜底产出'
+                  : '关闭：次数用尽后落成一条可见的失败记录，平台不会自己掏钱跑' }}
+              </span>
+            </el-form-item>
+          </template>
+
           <el-divider content-position="left">爆款阀门（都是"越大越像爆款"）</el-divider>
           <el-form-item label="相对自身中位数倍数">
             <el-input-number v-model="bd.viral_multiple" :min="0.1" :step="0.5" :precision="1" />
@@ -399,7 +434,11 @@
           </el-form-item>
           <el-form-item label="自动爆款拆解">
             <el-switch v-model="bd.auto_breakdown" />
-            <span class="detail">命中阀门后自动出拆解报告（消耗 LLM 额度）</span>
+            <span class="detail">
+              {{ bd.executor === 'external'
+                ? '命中阀门后自动排进外部队列（不消耗平台模型额度）'
+                : '命中阀门后自动出拆解报告（消耗 LLM 额度）' }}
+            </span>
           </el-form-item>
           <el-divider content-position="left">爆点判据（按影响力排序）</el-divider>
           <p class="tip" style="margin-bottom: 10px">
@@ -997,6 +1036,7 @@ const bd = reactive<any>({
   min_play: 0, min_like: 0, min_engagement_rate: 0, publish_within_days: 0,
   match_rule: 'any', transcript_limit: 24000, timeout_sec: 300,
   auto_transcribe: true, auto_understand: false, auto_breakdown: false,
+  executor: 'external', internal_fallback: true, claim_lease_min: 30, max_attempts: 3,
   hook_criteria: [] as HookCriterion[],
 })
 
@@ -1050,6 +1090,10 @@ async function loadBreakdownSettings() {
   bd.auto_transcribe = data.auto_transcribe ?? true
   bd.auto_understand = data.auto_understand ?? false
   bd.auto_breakdown = data.auto_breakdown ?? false
+  bd.executor = data.executor === 'internal' ? 'internal' : 'external'
+  bd.internal_fallback = data.internal_fallback ?? true
+  bd.claim_lease_min = data.claim_lease_min ?? 30
+  bd.max_attempts = data.max_attempts ?? 3
   bd.hook_criteria = Array.isArray(data.hook_criteria) && data.hook_criteria.length
     ? data.hook_criteria.map((c: any) => ({ id: c.id ?? '', name: c.name ?? '', ask: c.ask ?? '' }))
     : DEFAULT_HOOK_CRITERIA.map((c) => ({ ...c }))
@@ -1086,6 +1130,10 @@ async function saveBreakdownSettings() {
       auto_transcribe: bd.auto_transcribe,
       auto_understand: bd.auto_understand,
       auto_breakdown: bd.auto_breakdown,
+      executor: bd.executor,
+      internal_fallback: bd.internal_fallback,
+      claim_lease_min: bd.claim_lease_min,
+      max_attempts: bd.max_attempts,
       hook_criteria: (bd.hook_criteria as HookCriterion[]).map((c: HookCriterion) => ({
         id: c.id.trim(), name: c.name.trim(), ask: c.ask.trim(),
       })),
@@ -1442,6 +1490,16 @@ onUnmounted(stopPolling)
   font-size: var(--fs-sm);
   margin: 4px 0 12px;
   line-height: 1.6;
+}
+/* 执行器切到外部是「平台会停止自动出报告」这种量级的改变，值得一条显眼提示，
+   而不是混在说明文字里被扫过去。 */
+.executor-warn {
+  padding: 10px 14px;
+  border: 1px solid var(--accent-line);
+  background: var(--accent-soft);
+  color: var(--ink-2);
+  font-size: var(--fs-sm);
+  line-height: 1.7;
 }
 .detail {
   color: #909399;

@@ -189,6 +189,93 @@ def import_article(url: str) -> dict:
     return _post("/api/skills/import-article", {"url": url})
 
 
+# ---------- 爆款拆解（外移给外部 agent；走 /api/agent/*） ----------
+#
+# 这一组是「平台当服务端、外部 agent 当执行方」的入口。设计要点：
+# - 工具是**薄封装**（同上面全部工具），业务在 services/breakdown_*.py；
+# - 料包自带全部规则（判据表/证据话术/硬性规则/自定义提示词），agent 不必
+#   再调一次接口猜「还有什么约束」；
+# - 回传必须带 claim 时拿到的 lease_token，否则 409（防止 A 的迟到结果覆盖 B 的）；
+# - 规则另有 resource 形态（见下），不占工具定义的上下文预算。
+
+
+@mcp.tool()
+def list_pending_breakdowns(limit: int = 10) -> dict:
+    """列出等着外部处理的爆款拆解任务（未认领或租约已过期）。"""
+    return _get("/api/agent/breakdown/pending", limit=limit)
+
+
+@mcp.tool()
+def get_breakdown_packet(asset_id: int, max_chars: int | None = None) -> dict:
+    """取一条素材的完整拆解料包（含规则），不建租约。
+
+    只看料不接活时用这个；要接活请用 claim_breakdown，它同时返回租约。
+    """
+    params = {"max_chars": max_chars} if max_chars else None
+    return _get(f"/api/agent/breakdown/{asset_id}/packet", **(params or {}))
+
+
+@mcp.tool()
+def claim_breakdown(asset_id: int, agent_name: str = "", max_chars: int | None = None) -> dict:
+    """认领一条素材：返回 lease_token + 完整料包。
+
+    同一 agent 在租约内重复调用返回同一个 token（幂等）；被别人持有的素材会
+    返回 409 并说明剩余分钟数。
+    """
+    params = {"agent_name": agent_name or None, "max_chars": max_chars}
+    return _post(f"/api/agent/breakdown/{asset_id}/claim", params=params)
+
+
+@mcp.tool()
+def submit_breakdown_report(
+    asset_id: int, lease_token: str, report: dict, model: str = ""
+) -> dict:
+    """回传拆解报告。report 结构见 resource ``breakdown://contract``。
+
+    校验失败返回 422 并逐条说明原因（可直接据此修改后重传）；
+    部分判据命中被丢弃不报错，会在 ``dropped_entries`` 里列出原因。
+    """
+    return _post(
+        f"/api/agent/breakdown/{asset_id}/report",
+        {"lease_token": lease_token, "report": report, "model": model},
+    )
+
+
+@mcp.tool()
+def release_breakdown(asset_id: int, lease_token: str, reason: str = "") -> dict:
+    """放弃认领，把素材还回队列（次数保留）。"""
+    return _post(
+        f"/api/agent/breakdown/{asset_id}/release",
+        {"lease_token": lease_token, "reason": reason},
+    )
+
+
+# ---------- resources（规则不占工具上下文） ----------
+
+
+@mcp.resource("breakdown://contract")
+def breakdown_contract_resource() -> str:
+    """拆解报告输出契约：字段、类型、样例、硬性规则、契约版本。
+
+    文本由后端渲染（单一真相在 ``app/core/breakdown_contract.py``），这里**不复制**
+    字段表：复制就是第三份手写副本，改了源码忘了改这里时，agent 会照着过期契约
+    生产报告，而失败原因看起来像它自己不守格式。
+    """
+    return _get("/api/agent/contract")
+
+
+@mcp.resource("breakdown://rules/hook-criteria")
+def breakdown_criteria_resource() -> str:
+    """当前生效的爆点判据表（用户在设置页可改，以平台为准）。"""
+    return _get("/api/agent/hook-criteria")
+
+
+@mcp.resource("breakdown://packet/{asset_id}")
+def breakdown_packet_resource(asset_id: str) -> str:
+    """一条素材的完整料包全文（料包大时直接读，不塞进对话上下文）。"""
+    return _get(f"/api/agent/breakdown/{int(asset_id)}/packet")
+
+
 if __name__ == "__main__":
     if "--self-check" in sys.argv:
         # 不启动 MCP transport，只验证：能否连上后端 + Key 是否有效 + 工具能否列账号。

@@ -92,6 +92,13 @@ def enqueue_auto_breakdown(
     if steps:
         register_workflow(db, asset.id, steps, options={"force": False})
         db.commit()
+        # 外部执行器下 `breakdown` 步骤不会入队跑模型（handle_breakdown 会短路），
+        # 但仍要有一条待处理记录，否则列表端点看不到这条素材。
+        from app.services.breakdown_dispatch import is_external, prepare_external
+
+        if want_breakdown and is_external(db):
+            prepare_external(db, asset.id)
+            db.commit()
 
     logger.info(
         "自动爆款命中 asset=%s play=%s like=%s rate=%.4f (understand=%s breakdown=%s)",

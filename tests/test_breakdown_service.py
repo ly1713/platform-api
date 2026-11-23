@@ -87,6 +87,14 @@ def _llm_settings(_db):
     """Business paths no longer read llm_*; model wiring is patched at the gateway."""
 
 
+def _use_internal(db):
+    """把执行器切成 internal：``handle_breakdown`` 在 external 下会短路返回。"""
+    from app.models import SystemSetting
+
+    db.add(SystemSetting(key="breakdown_executor", value="internal"))
+    db.commit()
+
+
 _REPORT = {
     "verdict": "开头反常识 + 结尾引导下单，火在钩子",
     "score": 88,
@@ -527,10 +535,11 @@ def test_handle_breakdown_delegates(monkeypatch, session):
 
     c = _seed_content(session)
     a = _seed_asset(session, c)
+    _use_internal(session)
     session.commit()
     seen = {}
 
-    async def fake_run(db, asset_id, *, force=False):
+    async def fake_run(db, asset_id, *, force=False, **kwargs):
         seen["asset_id"] = asset_id
         seen["force"] = force
         return object()
@@ -552,11 +561,64 @@ def test_handle_breakdown_input_error_is_non_retryable(monkeypatch, session):
 
     c = _seed_content(session)
     a = _seed_asset(session, c)
+    _use_internal(session)
     session.commit()
 
-    async def boom(db, asset_id, *, force=False):
+    async def boom(db, asset_id, *, force=False, **kwargs):
         raise svc.BreakdownInputError("素材未关联内容")
 
     monkeypatch.setattr(svc, "run_breakdown", boom)
     with pytest.raises(NonRetryableJobError):
         asyncio.run(handlers.handle_breakdown(session, {"asset_id": a.id}))
+
+
+# ============================================================
+# 归一化同源：内部链路必须与外部回传共用契约校验
+# ============================================================
+
+
+def test_internal_path_uses_contract_normalization(monkeypatch, session):
+    """内部落库结果必须与 ``contract.normalize_report`` 逐字段一致。
+
+    拆解外移后会有两条写入路径。这条测试是它们不会分叉的证据：内部链路的
+    score / verdict / sections / hook_matches 全部来自契约层，不是另一份实现。
+    """
+    from app.core import breakdown_contract as contract
+    from app.core.breakdown_settings import get_breakdown_settings
+
+    _llm_settings(session)
+    c = _seed_content(session)
+    a = _seed_asset(session, c)
+    _seed_snapshot(session, c.id, play=1000, like=80, comment=12, favorite=5, share=3)
+    session.commit()
+    _patch_llm(monkeypatch)
+
+    row = asyncio.run(svc.run_breakdown(session, a.id))
+    expected = contract.normalize_report(_REPORT, get_breakdown_settings(session)["hook_criteria"])
+
+    assert row.score == expected["score"]
+    assert row.verdict == expected["verdict"]
+    assert row.comment_insights == expected["comment_insights"]
+    for key, value in expected["sections"].items():
+        assert row.sections.get(key) == value, f"sections[{key}] 与契约归一化结果不一致"
+
+
+def test_internal_path_drops_hook_match_with_unknown_criterion(monkeypatch, session):
+    """模型编造判据 id 时，内部链路也丢弃——与外部回传同一把尺子。"""
+    _llm_settings(session)
+    c = _seed_content(session)
+    a = _seed_asset(session, c)
+    session.commit()
+    _patch_llm(
+        monkeypatch,
+        report={
+            **_REPORT,
+            "hook_matches": [
+                {"criterion": "invented", "evidence": "听着就很炸"},
+                {"criterion": "hook", "evidence": "开场就反问"},
+            ],
+        },
+    )
+
+    row = asyncio.run(svc.run_breakdown(session, a.id))
+    assert row.sections["hook_matches"] == [{"criterion": "hook", "evidence": "开场就反问"}]

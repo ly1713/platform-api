@@ -117,9 +117,14 @@ def test_handle_understand_video_model_config_error_is_non_retryable(monkeypatch
 def test_handle_breakdown_model_config_error_is_non_retryable(monkeypatch, session):
     import app.services.breakdown_service as breakdown
     from app.core.queue import NonRetryableJobError
+    from app.models import SystemSetting
     from app.services.model_access_service import ModelConfigError
 
     a = _seed(session)
+    # 这条测的是「内部链路调模型失败要不可重试」，执行器必须是 internal：
+    # external 下 handler 根本不会调模型（那才是正确行为，另有测试覆盖）。
+    session.add(SystemSetting(key="breakdown_executor", value="internal"))
+    session.commit()
 
     async def missing_config(*args, **kwargs):
         raise ModelConfigError(

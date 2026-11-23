@@ -10,6 +10,7 @@ from starlette.routing import Mount, Route
 
 from app.api import (
     accounts,
+    agent_breakdown,
     ai_access,
     analytics,
     assets,
@@ -156,6 +157,7 @@ app.include_router(pipeline.router)
 app.include_router(analytics.router)
 app.include_router(ai_access.router)
 app.include_router(skills.router)
+app.include_router(agent_breakdown.router)
 app.include_router(model_access.router)
 app.include_router(system.router)
 app.include_router(system.public_router)
